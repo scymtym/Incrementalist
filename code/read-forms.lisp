@@ -14,21 +14,22 @@
                 (values 0 0)
                 (let ((first (first prefix)))
                   (values (end-line first) (end-column first)))))
-      (let ((client (make-instance 'client :stream* analyzer))
+      (let ((client  (make-instance 'client :stream* analyzer))
             (*cache* cache))
-        (loop for kind = (eclector.reader:call-as-top-level-read
-                          client (lambda ()
-                                   (parse-and-cache analyzer client))
-                          analyzer t nil nil)
+        (loop for ((object . kind) result)
+                 = (multiple-value-list
+                    (eclector.reader:call-as-top-level-read
+                     client (lambda ()
+                              (parse-and-cache analyzer client))
+                     analyzer t nil nil))
+              ;; If we reach EOF while reading whitespace, suffix must
+              ;; be empty, and the residue is either empty or it
+              ;; contains wads that should be removed.  If we do not
+              ;; reach EOF, then we stop only if the current position
+              ;; is that of the first parse result on the suffix.
               when (or (eq kind :eof)
                        (and (not (null suffix))
                             (position= (first suffix) analyzer)))
-                ;; If we reach EOF while reading whitespace, suffix
-                ;; must be empty, and the residue is either empty or
-                ;; it contains wads that should be removed.  If we do
-                ;; not reach EOF, then we stop only if the current
-                ;; position is that of the first parse result on the
-                ;; suffix.
                 do (setf residue '())
                    (return-from read-forms nil)
               ;; In case we skipped some whitespace, discard any wads

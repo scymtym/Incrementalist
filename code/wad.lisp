@@ -1,31 +1,115 @@
 (cl:in-package #:incrementalist)
 
-;;; A WAD is the result of parsing an expression or some material that
-;;; is normally skipped, such as a comment or an inactive reader
-;;; conditional.
+;;; wad
+;;;  ├─────────────────────────────┐
+;;;  │                        cst  │
+;;;  │                         │   │
+;;;  │          ┌──────────────┴──────────────┐
+;;;  │      cons-cst               │      atom-cst
+;;;  │          │                  │          │
+;;;  │    ┌─────┴──────┐           │    ┌─────┴──────┐
+;;;  │    │            │           │    │            │
+;;; cons-wad  cons-with-children  atom-wad  atom-with-children
+;;;     │              │              │              │
+;;;     └───────┬──────┘              └───────┬──────┘
+;;;             │                             │
+;;;  cons-extra-children-mixin          children-mixin
 
-(defclass basic-wad ()
-  (;; This slot contains the cache that this wad is part of.
-   (%cache :initarg :cache :reader cache)
-   ;; This slot contains the parent wad of this wad, or NIL if this
+(defclass children-mixin ()
+  ((%children :initarg  :children
+              :type     list
+              :accessor children
+              :reader   extra-children
+              :initform '())))
+
+(defmethod map-children ((function t) (object children-mixin))
+  (mapcar function (extra-children object)))
+
+;;; Instances of `cons-with-children' and `cons-wad' have two types of
+;;; children: the `cst:first' and `cst:rest' relations point to one
+;;; kind of children and the `%before-first', `%middle' and
+;;; `%after-rest' slots contain the second kind of children.
+;;;
+;;; * The children in the `%before-first' slot must precede the
+;;;   CST-based children in the `cst:first' relation.
+;;;
+;;; * The children in the `%middle' slot must follow the CST-based
+;;;   children in the `cst:first' relation and follow the CST-based
+;;;   children in the `cst:rest' relation.
+;;;
+;;; * The children in the `%after-rest' slot must follow the CST-based
+;;;   children in the `cst:rest' relation.
+;;
+;;; So input of the form
+;;;
+;;;   (#|a|# 1 #|b|# . 2 #|c|#)
+;;;
+;;; would be represented as a `cons-wad' with the comment-wad for
+;;; #|a|# in the `%before-first' slot, an `atom-wad' corresponding to
+;;; the 1 atom as the `cst:first' relation, the comment-wad for #|b|#
+;;; in the `%middle' slot, an `atom-wad' corresponding to the to the 2
+;;; atom in the `cst:rest' relation and the comment-wad for the #|c|#
+;;; in the `%after-rest' slot.
+;;;
+;;; The example
+;;;
+;;;   (1 #|a|#)
+;;;
+;;; would be represented as an `atom-wad' corresponding to the 1 atom
+;;; as the `cst:first' relation, an `atom-cst' (not `atom-wad')
+;;; without source information corresponding to the implicit `nil' in
+;;; the `cst:rest' relation and a comment-wad for #|a|# in the
+;;; `%after-rest' slot. Note that the `atom-cst' for the implicit
+;;; `nil' would not be returned by the `children' function since it is
+;;; not a wad and has no source information.
+(defclass cons-extra-children-mixin ()
+  ;; TODO maybe do this as a single slot which contains a plist or
+  ;; similar? Since extra children and in particular all three kinds
+  ;; of extra children should relatively rare. But consider that
+  ;; (:before-first (child))
+  ;; is two extra conses.
+  ((%before-first :initarg  :before-first
+                  :type     list ; TODO could store singletons without the list
+                  :reader   before-first
+                  :initform '())
+   (%middle       :initarg  :middle
+                  :type     list
+                  :reader   middle
+                  :initform '())
+   (%after-rest   :initarg  :after-rest
+                  :type     list
+                  :reader   after-rest
+                  :initform '())))
+
+(defclass family-relations-mixin ()
+  (;; This slot contains the parent wad of this wad, or NIL if this
    ;; wad is a top-level wad.
-   (%parent :initform nil :initarg :parent :accessor parent)
+   (%parent :initarg  :parent
+            :accessor parent
+            :initform nil)
    ;; This slot contains the left sibling wad of this wad, or NIL if
    ;; this wad is the first child of its parent.  If this wad is a
    ;; top-level wad, then this slot contains the preceding top-level
    ;; wad, or NIL if this is the first top-level wad in the buffer.
-   (%left-sibling
-    :initform nil
-    :initarg :left-sibling
-    :accessor left-sibling)
+   (%left-sibling :initarg  :left-sibling
+                  :accessor left-sibling
+                  :initform nil)
    ;; This slot contains the right sibling wad of this wad, or NIL if
    ;; this wad is the last child of its parent.  If this wad is a
    ;; top-level wad, then this slot contains the following top-level
    ;; wad, or NIL if this is the last top-level wad in the buffer.
-   (%right-sibling
-    :initform nil
-    :initarg :right-sibling
-    :accessor right-sibling)
+   (%right-sibling :initarg  :right-sibling
+                   :accessor right-sibling
+                   :initform nil)))
+
+;;; A WAD is the result of parsing an expression or some material that
+;;; is normally skipped, such as a comment or an inactive reader
+;;; conditional.
+
+(defclass basic-wad (family-relations-mixin)
+  (;; This slot contains the cache that this wad is part of.
+   (%cache :initarg   :cache
+           :reader    cache)
    ;; This slot contains the absolute start line of the wad.  Its
    ;; contents is valid only when the wad is on the prefix, and when
    ;; the wad is the top-level wad which is the first on the suffix.
@@ -33,32 +117,42 @@
    ;; obsolete value.  We define a :BEFORE method on the slot reader
    ;; so that the wad of the argument will always be on the prefix
    ;; when the absolute line number is asked for.
-   (%absolute-start-line-number
-    :initarg :absolute-start-line-number
-    :accessor absolute-start-line-number)
+   (%absolute-start-line-number :initarg  :absolute-start-line-number
+                                :type     (integer 0)
+                                :accessor absolute-start-line-number) ; TODO rename to absolute-start-line
    ;; This slot contains information about the start line of the wad.
    ;; Simple applications might always store the absolute line number
    ;; of the first line of the wad in this slot.  Other applications
    ;; might store a line number relative to some other wad.
-   (%start-line :initarg :start-line :accessor start-line)
+   (%start-line :initarg  :start-line
+                ; :type     (integer 0)
+                :accessor start-line)
    ;; This slot contains the difference between the start line and the
    ;; end line.  A value of 0 indicates that the wad starts and ends
    ;; in the same line.
-   (%height :initarg :height :reader height)
+   (%height :initarg :height
+            :type    (integer 0)
+            :reader  height)
    ;; This slot contains the absolute column of the first character in
    ;; this wad.  A value of 0 indicates that this wad starts in the
    ;; leftmost position in the source code.
-   (%start-column :initarg :start-column :accessor start-column)
+   (%start-column :initarg  :start-column
+                  :type     (integer 0)
+                  :accessor start-column)
    ;; This slot contains the absolute column of the last character of
    ;; the wad.  The value of this slot can never be 0.  If the last
    ;; character of the wad is the leftmost character in a line, then
    ;; this slot contains the value 1.
-   (%end-column :initarg :end-column :accessor end-column)
+   (%end-column :initarg  :end-column
+                :type     (integer 0) ; TODO 0 is used in some cases
+                :accessor end-column)
    ;; This slot contains the absolute column that the first character
    ;; of this wad should be positioned in, as computed by the rules of
    ;; indentation.  If this wad is not the first one on the line, then
    ;; this slot contains NIL.
-   (%indentation :initform nil :initarg :indentation :accessor indentation)))
+   (%indentation  :initarg  :indentation
+                  :accessor indentation
+                  :initform nil)))
 
 (defclass wad (basic-wad)
   (;; This slot contains the column number of the leftmost known
@@ -78,7 +172,22 @@
    ;; This slot contains TRUE if and only if the START-LINE slot is
    ;; relative to some other line.
    (%relative-p :initarg :relative-p :accessor relative-p)
-   (%children :initform '() :initarg :children :accessor children)))
+   ;; This slot stores different kind of errors which are represented
+   ;; as `error-wad's. Character syntax errors as reported by Eclector
+   ;; are stored in the "closest surrounding" wad. S-expression syntax
+   ;; errors are stored in the containing top-level wad.
+   ;;
+   ;; Invariants for errors:
+   ;; The error wad are relative iff containing wad is relative. The
+   ;; start-line of relative error wads is relative to the parent of
+   ;; the containing wad, not relative to preceding wads. So when
+   ;; turning the containing wad from relative to absolute, each error
+   ;; wad must be processed with the same offset as the containing
+   ;; wad.
+   (%errors :initarg  :errors
+            :type     list
+            :accessor errors
+            :initform '())))
 
 (defun set-family-relations-of-children (wad)
   (let* ((children (children wad))
@@ -113,9 +222,11 @@
                                   :max-column-number max-column)))
 
 (defun print-wad-position (wad stream)
-  (format stream "~:[abs~;rel~]:~d,~d -> ~d,~d"
+  (format stream "~:[abs~;rel~]:~d[~d],~d -> ~d,~d"
           (relative-p wad)
           (start-line wad)
+          (when (slot-boundp wad '%absolute-start-line-number)
+            (slot-value wad '%absolute-start-line-number))
           (start-column wad)
           (if (relative-p wad)
               (height wad)
@@ -190,24 +301,297 @@
   (and (wad-starts-before-wad-p wad1 wad2)
        (wad-ends-after-wad-p wad1 wad2)))
 
-(defclass expression-wad (wad)
-  ((%expression :initarg :expression :accessor expression)))
+;;; CST wads
+;;;
+;;; CST wads contain a "raw" expression. Note that wads based on
+;;; `cst:atom-cst' and `cst:cons-cst' are not the only CST wads. One
+;;; other example are labeled object definitions and references which
+;;; are based `eclector.concrete-syntax-tree:wrapper-cst'.
 
-(defmethod print-object ((object expression-wad) stream)
+(defclass cst-wad (wad cst:cst)
+  ())
+
+;;; Atom
+
+(defclass atom-with-children (children-mixin
+                              cst:atom-cst)
+  ())
+
+(defclass atom-wad (children-mixin
+                    cst-wad
+                    cst:atom-cst) ; TODO we inherit the `%source' slot which we do not use
+  ())
+
+(defmethod print-object ((object atom-wad) stream)
   (print-unreadable-object (object stream :type t)
     (print-wad-position object stream)
-    (format stream " expression: ~S" (expression object))))
+    (format stream " raw: ~S" (cst:raw object))))
 
-(defclass labeled-object-definition-wad (expression-wad)
+(defmethod map-children ((function t) (wad cst:atom-cst))
+  '())
+
+;;; Cons
+
+(defclass cons-with-children (cons-extra-children-mixin
+                              cst:cons-cst)
   ())
 
-(defclass labeled-object-reference-wad (expression-wad)
+(defclass cons-wad (cons-extra-children-mixin
+                    cst-wad
+                    cst:cons-cst) ; TODO we inherit the `%source' slot which we do not use
   ())
 
-(defclass no-expression-wad (wad)
+;;; EXTRA-CHILDREN are non-CST children like comments and other
+;;; skipped material.
+(defun distribute-extra-cons-children (result extra-children)
+  (check-type result cst:cons-cst)
+  (assert (not (null extra-children)))
+  (let* ((first              (let ((first (cst:first result)))
+                               (cond ((typep first 'wad)
+                                      first)
+                                     ((and (typep first 'cst:cons-cst)
+                                           (typep (cst:first first) 'wad))
+                                      (cst:first first)))))
+         (first-start-line   (when first (absolute-start-line-number first)))
+         (first-start-column (when first (start-column first)))
+         (first-end-line     (when first (+ first-start-line (height first))))
+         (first-end-column   (when first (end-column first)))
+         (rest               (let ((rest (cst:rest result)))
+                               (cond ((typep rest 'wad)
+                                      rest)
+                                     ((and (typep rest 'cst:cons-cst)
+                                           (typep (cst:first rest) 'wad))
+                                      (cst:first rest)))))
+         (rest-start-line    (when rest (absolute-start-line-number rest)))
+         (rest-start-column  (when rest (start-column rest)))
+         (rest-end-line      (when rest (+ rest-start-line (height rest))))
+         (rest-end-column    (when rest (end-column rest))))
+                                        ; (assert (not (relative-p cst-child)))
+    (let ((before-first '())
+          (in-first     '())
+          (before-rest  '())
+          (in-rest      '())
+          (remainder    extra-children))
+      (when first
+        ;; Before first child
+        (loop for extra-child = (first remainder)
+                                        ; do (assert (not (relative-p extra-child))) ; TODO
+              while (and extra-child
+                         (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
+                           (or (< end-line first-start-line)
+                               (and (= end-line first-start-line)
+                                    (<= (end-column extra-child) first-start-column)))))
+              do (push extra-child before-first)
+                 (pop remainder))
+        ;; Overlapping first child
+        (loop for extra-child = (first remainder)
+                                        ; do (assert (not (relative-p extra-child))) ; TODO
+              while (and extra-child
+                         (or (< (absolute-start-line-number extra-child) first-start-line)
+                             (and (= (absolute-start-line-number extra-child) first-start-line)
+                                  (< (start-column extra-child) first-start-column))))
+              do (warn "Dropping ~S ~S" extra-child first)
+                 (pop remainder))
+        ;; Contained in first child
+        (loop for extra-child = (first remainder)
+                                        ; do (assert (not (relative-p extra-child))) ; TODO
+              while (and extra-child
+                         (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
+                           (or (< end-line first-end-line)
+                               (and (= end-line first-end-line)
+                                    (<= (end-column extra-child) first-end-column)))))
+              do (push extra-child in-first)
+                 (pop remainder)))
+      (when rest
+        ;; Before rest child
+        (loop for extra-child = (first remainder)
+                                        ; do (assert (not (relative-p extra-child))) ; TODO
+              while (and extra-child
+                         (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
+                           (or (< end-line rest-start-line)
+                               (and (= end-line rest-start-line)
+                                    (<= (end-column extra-child) rest-start-column)))))
+              do (push extra-child before-rest)
+                 (pop remainder))
+        ;; Overlapping rest
+        (loop for extra-child = (first remainder)
+                                        ; do (assert (not (relative-p extra-child))) ; TODO
+              while (and extra-child
+                         (or (< (absolute-start-line-number extra-child) rest-start-line)
+                             (and (= (absolute-start-line-number extra-child) rest-start-line)
+                                  (< (start-column extra-child) rest-start-column))))
+              do (warn "Dropping ~S ~S" extra-child rest)
+                 (pop remainder))
+        ;; Contained in rest child
+        (loop for extra-child = (first remainder)
+                                        ; do (assert (not (relative-p extra-child))) ; TODO
+              while (and extra-child
+                         (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
+                           (or (< end-line rest-end-line)
+                               (and (= end-line rest-end-line)
+                                    (<= (end-column extra-child) rest-end-column)))))
+              do (push extra-child in-first)
+                 (pop remainder)))
+      (values (nreverse before-first) (nreverse in-first) (nreverse before-rest) (nreverse in-rest) remainder))
+    #+old (let ((index (position-if (lambda (non-cst-child)
+                                      (assert (not (relative-p non-cst-child)))
+                                      (or (> (absolute-start-line-number non-cst-child) child-start-line)
+                                          (and (= (absolute-start-line-number non-cst-child) child-start-line)
+                                               (> (start-column non-cst-child) child-start-column))))
+                                    extra-children)))
+            (if index
+                (values (subseq extra-children 0 index)
+                        (subseq extra-children index))
+                (values extra-children '())))))
+
+(defun add-extra-children (result extra-children)
+  (typecase result
+    (cst:atom-cst
+     (unless (typep result 'children-mixin)
+       (change-class result 'atom-with-children))
+     (reinitialize-instance result :children extra-children))
+    (cst:cons-cst
+     (multiple-value-bind (before-first in-first before-rest in-rest remaining)
+         (distribute-extra-cons-children result extra-children)
+       #+no (when before-first
+
+         (let ((existing-children (typecase result
+                                    (children-mixin
+                                     (children result))
+                                    (cst:cons-cst
+                                     (change-class result 'cons-with-children)
+                                     '()))))
+           (typecase result
+             (children-mixin
+              (setf (children result)
+                    (if (null existing-children)
+                        before-first
+                        (merge 'list
+                               before-first
+                               (copy-list existing-children)
+                               (lambda (child1 child2)
+                                 (wad-starts-before-wad-p child1 child2))))))
+             )))
+       (when (or before-first before-rest remaining)
+         (unless (typep result 'cons-extra-children-mixin)
+           (change-class result 'cons-with-children))
+         (reinitialize-instance result :before-first before-first
+                                       :middle       before-rest
+                                       :after-rest   (if (typep (cst:rest result) 'cst:cons-cst)
+                                                         '()
+                                                         remaining)))
+       (when in-first
+         (break)
+         ; (add-extra-children (cst:first result) in-first)
+         )
+       (when (or in-rest (and (typep (cst:rest result) 'cst:cons-cst) remaining))
+         (let ((rest (cst:rest result)))
+           ;; TODO first cst:first contains a cons-cst, try to add children there?
+           ;; for something like ((a #|x|# b) . (c d)) maybe?
+           (add-extra-children rest (append in-rest (if (typep (cst:rest result) 'cst:cons-cst)
+                                                        remaining
+                                                        '())))))
+       result))))
+
+;;; This method must return only children which are WADs and thus have
+;;; source information.
+(defmethod children ((wad cons-wad))
+  ;; TODO maybe cache this?
+  ;; TODO implement `map-children' instead?
+  #+old (let ((result '()))
+    (flet ((visit-cons (node)
+             #+no (when (typep node 'children-mixin)
+               (alexandria:appendf result (extra-children node)))
+             (when (typep node 'cons-extra-children-mixin)
+               (alexandria:appendf result (before-first node)))
+             (let ((first (cst:first node)))
+               (when (typep first 'wad)
+                 (alexandria:appendf result (list first))))
+             (when (typep node 'cons-extra-children-mixin)
+               (alexandria:appendf result (middle node))))
+           (visit-atom (node)
+             (typecase node
+               (wad ; dotted list
+                (alexandria:appendf result (list node)))
+               (atom-with-children
+                (alexandria:appendf result (children node))))))
+     (loop for previous = nil then node
+           for node = wad then (cst:rest node)
+           if (cst:consp node)
+             do (visit-cons node)
+                (when (and previous
+                           (typep previous 'cons-extra-children-mixin))
+                  (alexandria:appendf result (after-rest previous)))
+           else ; if (not (cst:null node))
+             do (visit-atom node)
+                (when (and previous
+                           (typep previous 'cons-extra-children-mixin))
+                  (alexandria:appendf result (after-rest previous)))
+                (loop-finish)
+           ; else
+             ; do (loop-finish)
+           ))
+    result)
+  (let ((result '()))
+    (map-children (lambda (child) (push child result)) wad)
+    (nreverse result)))
+
+(defmethod map-children ((function t) (wad cst:cons-cst))
+  (let ((function (alexandria:ensure-function function)))
+    (flet ((visit-cons (node)
+             (when (typep node 'cons-extra-children-mixin)
+               (mapcar function (before-first node)))
+             (let ((first (cst:first node)))
+               (when (typep first 'wad)
+                 (funcall function first)))
+             (when (typep node 'cons-extra-children-mixin)
+               (mapcar function (middle node))))
+           (visit-atom (node)
+             (typecase node
+               (wad ; dotted list
+                (funcall function node))
+               (atom-with-children
+                (map-children function node)))))
+      (loop for previous = nil then node
+            for node = wad then (cst:rest node)
+            if (cst:consp node)
+              do (visit-cons node)
+                 (when (and previous
+                            (typep previous 'cons-extra-children-mixin))
+                   (mapcar function (after-rest previous)))
+            else ; if (not (cst:null node))
+              do (visit-atom node)
+                 (when (and previous
+                            (typep previous 'cons-extra-children-mixin))
+                   (mapcar function (after-rest previous)))
+                 (loop-finish)))))
+
+;;; Definition and reference wads
+
+(defclass labeled-object-wad (children-mixin cst-wad)
   ())
 
-(defclass skipped-wad (no-expression-wad)
+(defclass labeled-object-definition-wad (labeled-object-wad
+                                         eclector.concrete-syntax-tree:definition-cst)
+  ())
+
+(defmethod children ((node labeled-object-definition-wad))
+  ;; TODO think about ordering
+  (list* (eclector.concrete-syntax-tree:target node)
+         (call-next-method)))
+
+(defmethod map-children ((function t) (node labeled-object-definition-wad))
+  ;; TODO think about ordering
+  (funcall function (eclector.concrete-syntax-tree:target node))
+  (call-next-method))
+
+(defclass labeled-object-reference-wad (labeled-object-wad
+                                        eclector.concrete-syntax-tree:reference-cst)
+  ())
+
+;;; Non-expression wads
+
+(defclass skipped-wad (children-mixin wad)
   ())
 
 ;;; This class is the base class of all comment wads.
@@ -247,9 +631,14 @@
 (defclass reader-macro-wad (ignored-wad)
   ())
 
-(defclass error-wad (wad)
+(defclass error-wad (wad) ; TODO doesn't need `%errors' slot and maybe other stuff
   ((%condition :initarg :condition
                :reader  condition*)))
+
+(defmethod children ((wad error-wad))
+  '())
+
+(defmethod map-children ((function t) (object error-wad)))
 
 (defmethod print-object ((object error-wad) stream)
   (print-unreadable-object (object stream :type t)
@@ -258,16 +647,22 @@
             (class-name (class-of (condition* object))))))
 
 (defgeneric relative-to-absolute (wad offset)
-  (:method ((p wad) offset)
-    (assert (relative-p p))
-    (incf (start-line p) offset)
-    (setf (relative-p p) nil)))
+  (:method ((wad wad) offset)
+    (flet ((adjust (wad)
+             (assert (relative-p wad))
+             (incf (start-line wad) offset)
+             (setf (relative-p wad) nil)))
+      (adjust wad)
+      (mapc #'adjust (errors wad)))))
 
 (defgeneric absolute-to-relative (wad offset)
-  (:method ((p wad) offset)
-    (assert (not (relative-p p)))
-    (decf (start-line p) offset)
-    (setf (relative-p p) t)))
+  (:method ((wad wad) offset)
+    (flet ((adjust (wad)
+             (assert (not (relative-p wad)))
+             (decf (start-line wad) offset)
+             (setf (relative-p wad) t)))
+      (adjust wad)
+      (mapc #'adjust (errors wad)))))
 
 ;;; RELATIVE-WADS is a list of wads where the start line of the first
 ;;; element is relative to OFFSET, and the start line of each of the
@@ -304,14 +699,21 @@
   (assert (not (relative-p top-level-wad)))
   (setf (absolute-start-line-number top-level-wad)
         (start-line top-level-wad))
-  (labels ((compute-line-numbers (relative-wads offset)
+  (labels ((process-children (relative-wads offset)
              (loop with base = offset
                    for wad in relative-wads
                    for absolute-start-line-number = (+ base (start-line wad))
+                   do (assert (relative-p wad))
                    do (setf (absolute-start-line-number wad)
                             absolute-start-line-number)
-                      (setf base absolute-start-line-number)
-                      (compute-line-numbers
-                       (children wad) absolute-start-line-number))))
-    (compute-line-numbers
-     (children top-level-wad) (start-line top-level-wad))))
+                      (process-wad wad base absolute-start-line-number)
+                      (setf base absolute-start-line-number)))
+           (process-wad (wad parent-start-line-number wad-start-line-number)
+             (process-children (children wad) wad-start-line-number)
+             (loop for error-wad in (errors wad)
+                   for absolute-start-line-number = (if (relative-p error-wad)
+                                                        (+ parent-start-line-number (start-line error-wad))
+                                                        (start-line error-wad))
+                   do (setf (absolute-start-line-number error-wad)
+                            absolute-start-line-number))))
+    (process-wad top-level-wad nil (start-line top-level-wad))))

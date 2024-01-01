@@ -14,10 +14,9 @@
 
    ;; Wads
    #:wad
-   #:expression-wad
+   #:cst-wad
    #:labeled-object-definition-wad
    #:labeled-object-reference-wad
-   #:no-expression-wad
    #:skipped-wad
    #:comment-wad
    #:block-comment-wad

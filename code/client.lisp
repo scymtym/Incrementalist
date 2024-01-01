@@ -1,6 +1,8 @@
 (cl:in-package #:incrementalist)
 
-(defclass client (eclector.parse-result:parse-result-client)
+(defclass client (eclector.concrete-syntax-tree:definition-csts-mixin
+                  eclector.concrete-syntax-tree:reference-csts-mixin
+                  eclector.concrete-syntax-tree:cst-client)
   ;; TODO it would be nicer not to store the stream in the client like
   ;; this, but the method on make-expression-result needs the stream
   ;; and cannot access it in other ways.
@@ -22,13 +24,34 @@
 
 ;;; Token interpretation
 
+(defmethod reader:call-reader-macro :around ((client       client)
+                                             (input-stream t)
+                                             (char         t)
+                                             (readtable    t))
+  (let ((values (multiple-value-list (call-next-method))))
+    (typecase values
+      (null
+       (values))
+      ((cons null null)
+       (make-instance 'existing-symbol-token :name         "NIL"
+                                             :package-name "COMMON-LISP"))
+      (t
+       (let ((result (first values)))
+         (apply #'values
+                (typecase result
+                  (number (make-instance 'numeric-token :characters "TODO" :value result))
+                  (t      result))
+                (rest values)))))))
+
 (defmethod reader:interpret-token :around
     ((client client) input-stream token escape-ranges)
   (let ((result (call-next-method)))
-    (typecase result
-      (token  result)
-      (number (make-instance 'numeric-token :characters token :value result))
-      (t      (make-instance 'other-token :characters token)))))
+    (if (eq result eclector.reader::*consing-dot*) ; TODO not having `other-token' would resolve this automatically
+        result
+        (typecase result
+          (token  result)
+          (number (make-instance 'numeric-token :characters token :value result))
+          (t      (make-instance 'other-token :characters token))))))
 
 (defmethod reader:interpret-symbol-token
     ((client client) input-stream token position-package-marker-1 position-package-marker-2)
@@ -74,7 +97,7 @@
 
 ;;; Result construction
 
-(defun make-result-wad (class stream source children
+(defun make-result-wad (class stream source children ; still used for WORD-WADs
                         &rest extra-initargs &key &allow-other-keys)
   (destructuring-bind ((start-line . start-column) . (end-line . end-column))
       source
@@ -88,7 +111,28 @@
                               :relative-p     nil
                               :max-line-width max-line-width
                               :children       children
+
+                              :absolute-start-line-number start-line
+
                               extra-initargs))))
+
+(defun make-cst-wad (cst class stream source
+                     &rest extra-initargs &key &allow-other-keys)
+  (destructuring-bind ((start-line . start-column) . (end-line . end-column))
+      source
+    (let* ((line-number    (current-line-number stream))
+           (max-line-width (compute-max-line-width
+                            stream start-line line-number '())))
+      (apply #'change-class cst class :start-line     start-line
+                                      :height         (- end-line start-line)
+                                      :start-column   start-column
+                                      :end-column     end-column
+                                      :relative-p     nil
+                                      :max-line-width max-line-width
+
+                                      :absolute-start-line-number start-line
+
+                                      extra-initargs))))
 
 (defun make-word-wads (stream source
                        &key (start-column-offset 0)
@@ -179,45 +223,112 @@
     ((client client) (result symbol-token) (children t) (source t))
   (if (and (null children) (not (string= (package-name result) "COMMON-LISP")))
       (let ((words (make-word-wads (stream* client) source)))
-        (make-result-wad 'expression-wad (stream* client) source words
-                         :expression result))
+        (make-result-wad 'atom-wad (stream* client) source words
+                         :raw result))
       (call-next-method)))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client client) (result string) (children t) (source t))
   (if (null children)
       (let ((words (make-word-wads (stream* client) source)))
-        (make-result-wad 'expression-wad (stream* client) source words
-                         :expression result))
+        (make-result-wad 'atom-wad (stream* client) source words
+                         :raw result))
       (call-next-method)))
+
+(defun adjust-result-class (cst new-class stream source)
+  (if (null source)
+      cst
+      (destructuring-bind ((start-line . start-column) . (end-line . end-column))
+          source
+        (let* ((line-number    (current-line-number stream))
+               (max-line-width (compute-max-line-width
+                                stream start-line line-number '())))
+          (change-class cst new-class
+                        :start-line     start-line
+                        :height         (- end-line start-line)
+                        :start-column   start-column
+                        :end-column     end-column
+                        :relative-p     nil
+                        :max-line-width max-line-width
+                        :absolute-start-line-number start-line)))))
+
+(defun adjust-result (cst new-class stream source extra-children)
+  (let ((result (adjust-result-class cst new-class stream source)))
+    (when extra-children
+      (add-extra-children result extra-children)
+      ;; There may be "indirect" children of the form
+      ;; <RESULT is a CONS-WAD> -> rest ... rest -> CONS-WITH-CHILDREN -> children -> <A-WAD-CHILD>
+      ;; So refresh the family relations here.
+      (set-family-relations-of-children result))
+    result))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client client) (result t) (children t) (source t))
-  (make-result-wad 'expression-wad (stream* client) source children
-                   :expression result))
+  (multiple-value-bind (cst-children extra-children)
+      (loop for child in children
+            if (typep child 'cst:cst)
+              collect child into cst-children
+            else
+              collect child into extra-children
+            finally (return (values cst-children extra-children)))
+    (let* ((cst       (call-next-method client result cst-children source))
+           (new-class (etypecase cst
+                        (cst:atom-cst 'atom-wad)
+                        (cst:cons-cst 'cons-wad))))
+      (assert (not (typep cst 'wad)))
+      (adjust-result cst new-class (stream* client) source extra-children))))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client   client)
      (result   eclector.parse-result:definition)
      (children t)
      (source   t))
-  (let ((stream (stream* client))
-        (labeled-object (eclector.parse-result:labeled-object result)))
-    (multiple-value-bind (state object parse-result)
-        (reader:labeled-object-state client labeled-object)
-      (declare (ignore state))
-      (assert (member parse-result children))
-      (make-result-wad 'labeled-object-definition-wad stream source children
-                       :expression object))))
+  (let ((cst (call-next-method)))
+    (adjust-result cst 'labeled-object-definition-wad (stream* client) source '() )))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client   client)
      (result   eclector.parse-result:reference)
      (children t)
      (source   t))
-  (let* ((stream (stream* client))
-         (labeled-object (eclector.parse-result:labeled-object result))
-         (object (nth-value
-                  1 (reader:labeled-object-state client labeled-object))))
-    (make-result-wad 'labeled-object-reference-wad stream source '()
-                     :expression object)))
+  (let ((cst (call-next-method))) ; TODO handle children
+    (adjust-result cst 'labeled-object-reference-wad (stream* client) source '())))
+
+;;; S-expression generation
+
+(flet ((make-form (symbol-name package-name &rest rest)
+         (let ((head (make-instance 'existing-symbol-token :name         symbol-name
+                                                           :package-name package-name)))
+           (list* head rest))))
+
+  (defmethod eclector.reader:wrap-in-quote ((client client) (material t))
+    (make-form "QUOTE" "COMMON-LISP" material))
+
+  (defmethod eclector.reader:wrap-in-quasiquote ((client client) (form t))
+    (make-form "QUASIQUOTE" "KEYWORD" form))
+
+  (defmethod eclector.reader:wrap-in-unquote ((client client) (form t))
+    (make-form "UNQUOTE" "KEYWORD" form))
+
+  (defmethod eclector.reader:wrap-in-unquote-splicing ((client client) (form t))
+    (make-form "UNQUOTE-SPLICING" "KEYWORD" form))
+
+  (defmethod eclector.reader:wrap-in-function ((client client) (name t))
+    (make-form "FUNCTION" "COMMON-LISP" name)))
+
+;;; Reconstruct
+
+(defmethod concrete-syntax-tree:reconstruct ((client     client)
+                                             (expression t)
+                                             (cst        t)
+                                             &key default-source)
+  (declare (ignore default-source))
+  (let* ((result (call-next-method))
+         (source (cst:source result)))
+    (if source
+        (etypecase result
+          (cst:atom-cst
+           (make-cst-wad result 'atom-wad (stream* client) source))
+          (cst:cons-cst
+           (make-cst-wad result 'cons-wad (stream* client) source)))
+        result)))

@@ -1,5 +1,10 @@
 (cl:in-package #:incrementalist)
 
 (defun update-cache (analyzer)
-  (scavenge (cache analyzer))
-  (read-forms analyzer))
+  (let* ((buffer      (buffer analyzer))
+         (buffer-time (cluffer-standard-buffer::current-time buffer))
+         (cache       (cache analyzer))
+         (cache-time  (time-stamp cache)))
+    (when (or (null cache-time) (> buffer-time cache-time))
+      (scavenge cache)
+      (read-forms analyzer))))

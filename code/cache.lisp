@@ -217,9 +217,18 @@
 ;;; worklist, and of the first wad of the suffix, if any.
 (defun adjust-worklist-and-suffix (cache increment)
   (loop for wad in (worklist cache)
-        do (incf (start-line wad) increment))
+        do (adjust-wad wad increment) ; (incf (start-line wad) increment)
+        )
   (unless (null (suffix cache))
-    (incf (start-line (first (suffix cache))) increment)))
+    (adjust-wad (first (suffix cache)) increment)))
+
+(defun adjust-wad (wad amount)
+  (flet ((adjust (wad)
+           (incf (start-line wad) amount)))
+    (adjust wad)
+    (let ((errors (errors wad)))
+      (unless (null errors)
+        (mapc #'adjust errors)))))
 
 ;;; If the worklist is empty then move a wad from the suffix to the
 ;;; worklist (in that case, it is known that the suffix is not empty).
@@ -386,55 +395,60 @@
           (when (> end-column 0)
             (funcall space-function last-line 0 end-column))))))
 
+(defvar *rendering* nil)
 (defun map-wads-and-spaces
     (cache first-line last-line wad-function space-function)
-  ;; Make sure no wad on the suffix starts at or before LAST-LINE.
-  (loop until (null (suffix cache))
-        while (<= (start-line (first (suffix cache))) last-line)
-        do (suffix-to-prefix cache))
-  ;; Find a suffix of the prefix (i.e., a prefix of wads in the
-  ;; buffer) such that it is not the case that the first wad of the
-  ;; prefix (i.e., the last wad of the buffer prefix) starts entirely
-  ;; after LAST-LINE.
-  (let ((remaining
-          (loop for remaining on (prefix cache)
-                when (<= (start-line (first remaining)) last-line)
-                  return remaining)))
-    (if (null remaining)
-        (let ((line-length (line-length cache last-line)))
-          (map-empty-area
-           cache first-line 0 last-line line-length space-function))
-        (progn (when (<= (end-line (first remaining)) last-line)
-                 (map-empty-area
-                  cache
-                  (end-line (first remaining))
-                  (end-column (first remaining))
-                  last-line
-                  (line-length cache last-line)
-                  space-function))
-               (loop for (wad2 wad1) on remaining
-                     do (funcall wad-function wad2)
-                     until (or (null wad1)
-                               (< (end-line wad1) first-line))
-                     do (map-empty-area
-                         cache
-                         (end-line wad1)
-                         (end-column wad1)
-                         (start-line wad2)
-                         (start-column wad2)
-                         space-function)
-                     finally
-                        (if (null wad1)
-                            (map-empty-area
-                             cache
-                             0 0
-                             (start-line wad2)
-                             (start-column wad2)
-                             space-function)
-                            (map-empty-area
+  (handler-bind ((error (lambda (condition)
+                          (declare (ignore condition))
+                          (break))))
+    ;; Make sure no wad on the suffix starts at or before LAST-LINE.
+    (loop until (null (suffix cache))
+          while (<= (start-line (first (suffix cache))) last-line)
+          do (suffix-to-prefix cache))
+    ;; Find a suffix of the prefix (i.e., a prefix of wads in the
+    ;; buffer) such that it is not the case that the first wad of the
+    ;; prefix (i.e., the last wad of the buffer prefix) starts entirely
+    ;; after LAST-LINE.
+    (let ((*rendering* t))
+      (let ((remaining
+              (loop for remaining on (prefix cache)
+                    when (<= (start-line (first remaining)) last-line)
+                    return remaining)))
+        (if (null remaining)
+            (let ((line-length (line-length cache last-line)))
+              (map-empty-area
+               cache first-line 0 last-line line-length space-function))
+            (progn (when (<= (end-line (first remaining)) last-line)
+                     (map-empty-area
+                      cache
+                      (end-line (first remaining))
+                      (end-column (first remaining))
+                      last-line
+                      (line-length cache last-line)
+                      space-function))
+                   (loop for (wad2 wad1) on remaining
+                         do (funcall wad-function wad2)
+                         until (or (null wad1)
+                                   (< (end-line wad1) first-line))
+                         do (map-empty-area
                              cache
                              (end-line wad1)
                              (end-column wad1)
                              (start-line wad2)
                              (start-column wad2)
-                             space-function)))))))
+                             space-function)
+                         finally
+                            (if (null wad1)
+                                (map-empty-area
+                                 cache
+                                 0 0
+                                 (start-line wad2)
+                                 (start-column wad2)
+                                 space-function)
+                                (map-empty-area
+                                 cache
+                                 (end-line wad1)
+                                 (end-column wad1)
+                                 (start-line wad2)
+                                 (start-column wad2)
+                                 space-function)))))))))

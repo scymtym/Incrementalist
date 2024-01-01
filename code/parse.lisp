@@ -1,14 +1,70 @@
 (cl:in-package #:incrementalist)
 
-(defun make-error-wad (condition start-line start-column height width line-width)
+(defun last-descendant-source (cst)
+  ;; TODO must consider wad children
+  (loop :for cst* = cst :then (cst:rest cst*)
+        :for end-source = (or (cst:source cst*)
+                              (when (typep cst* 'wad)
+                                (cons (cons (absolute-start-line-number cst*)
+                                            (start-column cst*))
+                                      (cons (+ (absolute-start-line-number cst*) (height cst*))
+                                            (end-column cst*))))
+                              (when (cst:consp cst*)
+                                (or (last-descendant-source (cst:rest cst*))
+                                    (last-descendant-source (cst:first cst*))))
+                              end-source)
+        :do (format *trace-output* "maybe first ~A with source ~A~%"
+                    cst* (cst:source cst*))
+        :until (cst:atom cst*)
+        :finally (format *trace-output* "~A with ~A => ~A~%"
+                         cst* (cst:source cst*) end-source)
+                 (return end-source)))
+
+(defun cst-source (cst)
+  (alexandria:if-let ((source (cst:source cst)))
+    source
+    (when (cst:consp cst)
+      (alexandria:when-let ((first (cst:source (cst:first cst))))
+        (let ((last (last-descendant-source cst)))
+          (format *trace-output* "first ~S last ~S~%" first last)
+          (values first (or last first)))))))
+
+(defun error-location (source)
+  (typecase source
+    (wad
+     (let* ((line   (absolute-start-line-number source))
+            (column (start-column source))
+            (height (height source))
+            (width  (- (end-column source) column)))
+       (values line column height width)))
+    (cst:cst
+     (multiple-value-bind (start-source end-source) (cst-source source)
+       (when start-source
+         (destructuring-bind ((first-start-line . first-start-column)
+                              . first-end)
+             start-source
+           (declare (ignore first-end))
+           (destructuring-bind (last-start . (last-end-line . last-end-column))
+               end-source
+             (declare (ignore last-start))
+             (values first-start-line
+                     first-start-column
+                     (- last-end-line first-start-line)
+                     (- last-end-column first-start-column)))))))))
+
+
+(defun make-error-wad (condition start-line start-column height width line-width) ; TODO pass end-column instead of width?
   (let ((end-column (+ start-column width)))
     (make-wad 'error-wad :max-line-width line-width
-                         :children       '()
+                         ; :children       '()
                          :start-line     start-line
                          :start-column   start-column
                          :height         height
                          :end-column     end-column
                          :relative-p     nil
+
+                         :absolute-start-line-number start-line
+
                          :condition      condition)))
 
 ;;; PARSE-AND-CACHE collects Eclector errors in *ERRORS* during
@@ -27,20 +83,25 @@
               (let* ((line-width   (line-length (cache analyzer)
                                                 (current-line-number analyzer)))
                      (start-column (max 0 (+ column (eclector.base:position-offset condition))))
-                     (width        (eclector.base:range-length condition)))
-                (push (make-error-wad condition line start-column 0 width line-width)
-                      *errors*)))
+                     (width        (eclector.base:range-length condition))
+                     (error-wad    (make-error-wad
+                                    condition line start-column 0 width line-width)))
+                                        ; (setf (slot-value error-wad '%absolute-start-line-number) line) ;; TODO
+                (push error-wad *errors*)))
             (eclector.reader:recover))))
      ,@body))
 
-(defun merge-children (children extra-children)
+#+unused (defun merge-children (children extra-children)
+  (break)
   (merge 'list (copy-list children) (copy-list extra-children)
          #'wad-starts-before-wad-p))
 
 ;;; Add the wads in EXTRA-CHILDREN to WAD.
-(defun add-children (wad extra-children)
+#+unused (defun add-children (wad extra-children)
+  (break)
   ;; Make descendants of WAD absolute so we can compute the
   ;; appropriate insertion points for EXTRA-CHILDREN.
+  ;; TODO Can we just compute the absolute line numbers instead?
   (labels ((rec (wad)
              (let ((children (children wad)))
                (when children
@@ -99,17 +160,31 @@
         (let ((*errors* '()))
           (multiple-value-bind (object kind result)
               (call-next-method)
-            (when *errors*
-              (add-children result (reverse *errors*)))
+            ;; TODO could associate RESULT with any errors so the caller doesn't have to traverse the result tree as much when adding error children
+            #+no (when *errors*
+              (assert (not (relative-p result)))
+              (compute-absolute-line-numbers result)
+              ;; (add-extra-children result (reverse *errors*))
+              #+no (add-children result (reverse *errors*)))
+            (when (eq kind :object)
+             (alexandria:when-let ((errors *errors*))
+               ;; FIXME should not really be needed but the `absolute-start-line-number' `:before' method checks for this
+               (mapc (lambda (error)
+                       (assert (not (relative-p error)))
+                       (when (relative-p result)
+                         (absolute-to-relative error (absolute-start-line-number result)))
+                       (setf (parent error) result))
+                     errors)
+               (setf (errors result) errors)))
             (values object kind result)))
         ;; There is a cached wad for the current input position. Turn
         ;; the wad into appropriate return values, inject it into
         ;; Eclector's result stack and advance STREAM.
         (multiple-value-prog1
             (etypecase cached
-              (skipped-wad    (values nil                 :skip   cached t))
-              (expression-wad (values (expression cached) :object cached t))
-              (error-wad      (values nil                 :skip   cached t)))
+              (skipped-wad (values nil              :skip   cached t))
+              (error-wad   (values nil              :skip   cached t))
+              (cst-wad     (values (cst:raw cached) :object cached t)))
           (assert (not (relative-p cached)))
           (push cached (first eclector.parse-result::*stack*)) ; HACK
           (advance-stream-to-beyond-wad stream cached)))))
@@ -122,21 +197,62 @@
   ;; then asks Eclector to perform the appropriate recovery. The
   ;; READ-MAYBE-NOTHING method takes care of integrating the collected
   ;; ERROR-WADs into the wad tree.
-  (multiple-value-bind (object kind wad)
-      (with-error-recording ()
-        (eclector.reader:read-maybe-nothing client analyzer nil nil))
-    (declare (ignore object))
-    (case kind
-      (:eof)              ; nothing to do for end of input
-      (:whitespace)       ; nothing to do for whitespace
-      (t                  ; got a tree of absolute wads. make relative
-       (labels ((rec (wad)
-                  (unless (relative-p wad) ; TODO can it be relative due to caching or what?
-                    (let ((children (children wad)))
-                      (when children
-                        (map nil #'rec children)
-                        (unless (every #'relative-p children)
-                          (make-relative children (start-line wad))))))))
-         (rec wad))
-       (push-to-prefix (cache analyzer) wad)))
-    kind))
+  (let ((*errors* '())) ; TODO this binding should be unused
+    (multiple-value-bind (object kind wad)
+        (with-error-recording ()
+          (eclector.reader:read-maybe-nothing client analyzer nil nil))
+      (case kind
+        (:eof)             ; nothing to do for end of input
+        (:whitespace)      ; nothing to do for whitespace
+        (t                 ; got a tree of absolute wads. make relative
+         (when (null wad)
+           (assert (eq kind :skip)))
+         (when wad
+           (let ((*print-right-margin* 60)
+                 (*print-pretty* t))
+             (format *trace-output* "Errors: ~S~%" *errors*))
+           #+no (compute-absolute-line-numbers wad)
+           #+no (add-extra-children wad *errors*)
+           #+no (progn
+                  (format *trace-output* "Before making relative~%")
+                  (second-climacs-syntax-common-lisp::print-wad-tree wad *trace-output*)
+                  (terpri *trace-output*))
+
+           (assert (typep wad 'wad))
+           (assert (not (relative-p wad)))
+
+           (labels ((rec (wad)
+                      ;; FIXED I think add-children messes things up
+                      (when (relative-p wad)
+                        (labels ((rec (desc)
+                                   (assert (relative-p desc))
+                                   (mapc (lambda (e) (assert (relative-p e))) (errors desc))
+                                   (mapc #'rec (children desc))))
+                          (rec wad)))
+                      (unless (relative-p wad) ; TODO can it be relative due to caching or what?
+                        (let (; (children (children wad))
+                                        ; (errors   (errors wad))
+                              )
+                          (progn ; when children
+                            ; (mapc #'rec children)
+                            (let ((every-relative-p t))
+                              (map-children (lambda (child)
+                                              (when (not (relative-p child))
+                                                (setf every-relative-p nil))
+                                              (rec child))
+                                            wad)
+                             (unless every-relative-p ; (every #'relative-p children)
+                               (make-relative (children wad) (start-line wad))))) ; TODO avoid consing the children list
+                                        ; (absolute-to-relative wad (start-line wad))
+                          #+no (when errors
+                                 (unless (every #'relative-p errors)
+                                   (mapc (alexandria:rcurry #'absolute-to-relative (start-line wad))))))
+                        )))
+             (rec wad))
+
+           #+no (progn
+                  (format *trace-output* "After making relative~%")
+                  (second-climacs-syntax-common-lisp::print-wad-tree wad *trace-output*)
+                  (terpri *trace-output*))
+           (push-to-prefix (cache analyzer) wad))))
+      (values (cons object kind) wad)))) ; HACK
