@@ -129,7 +129,7 @@
           (let ((suffix-top (first suffix)))
             (setf (right-sibling wad)        suffix-top
                   (left-sibling  suffix-top) wad)))
-      (compute-absolute-line-numbers wad)
+      (compute-absolute-line-numbers wad) ; TODO do this here?
       (push wad prefix))))
 
 (defgeneric suffix-to-prefix (cache)
@@ -138,7 +138,7 @@
 
 (defgeneric prefix-to-suffix (cache)
   (:method ((cache cache))
-    (assert (not (null (prefix cache))))
+    (assert (not (null (prefix cache)))) ; TODO maybe remove since pop-from-prefix asserts this already
     (push-to-suffix cache (pop-from-prefix cache))))
 
 (defun gap-start (cache)
