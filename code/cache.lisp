@@ -96,6 +96,9 @@
 
 (defgeneric pop-from-prefix (cache)
   (:method ((cache cache))
+    (assert (not (null (prefix cache))))
+    (when (second (prefix cache))
+      (assert (not (relative-p (second (prefix cache))))))
     (pop (prefix-width cache))
     (pop (prefix cache))))
 
@@ -159,12 +162,14 @@
   (pop (worklist cache)))
 
 (defun push-to-worklist (cache wad)
+  (assert (not (relative-p wad)))
   (push wad (worklist cache)))
 
 (defun pop-from-residue (cache)
   (pop (residue cache)))
 
 (defun push-to-residue (cache wad)
+  (assert (not (relative-p wad)))
   (push wad (residue cache)))
 
 (defun finish-scavenge (cache)

@@ -113,6 +113,8 @@
                                           (cons line column)))
                        (misspelledp (and checkp
                                          (null (spell:english-lookup word)))))
+                   (when (> line end-line) (break))
+                   (when (and (= line end-line) (> column end-column*)) (break))
                    (push (make-result-wad 'word-wad stream source '()
                                           :misspelled misspelledp)
                          words)))
