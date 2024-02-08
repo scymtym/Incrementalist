@@ -6,7 +6,7 @@
 (defun punctuationp (character)
   (member character '(#\. #\? #\! #\: #\, #\;
                       #\( #\) #\< #\> #\[ #\] #\{ #\}
-                      #\" #\' #\` #\/ #\- #\+ #\* #\% #\= #\#)))
+                      #\" #\' #\` #\/ #\_ #\- #\+ #\* #\% #\= #\#)))
 
 ;;; Return the line number and the column number of CURSOR as two
 ;;; values.
