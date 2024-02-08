@@ -274,9 +274,17 @@
     (let* ((cst       (call-next-method client result cst-children source))
            (new-class (etypecase cst
                         (cst:atom-cst 'atom-wad)
-                        (cst:cons-cst 'cons-wad))))
+                        (cst:cons-cst 'cons-wad)))
+           (orphans   (loop :for child :in cst-children
+                            :unless (block nil
+                                      (map-children (lambda (child*)
+                                                      (when (eq child* child)
+                                                        (return t)))
+                                                    cst)
+                                      nil) ; TODO do not call children repeatedly
+                              :collect child)))
       (assert (not (typep cst 'wad)))
-      (adjust-result cst new-class (stream* client) source extra-children))))
+      (adjust-result cst new-class (stream* client) source (append extra-children orphans)))))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client   client)
