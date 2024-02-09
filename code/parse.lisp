@@ -53,7 +53,7 @@
                      (- last-end-column first-start-column)))))))))
 
 
-(defun make-error-wad (condition start-line start-column height width line-width) ; TODO pass end-column instead of width?
+(defun make-error-wad (condition start-line start-column height width) ; TODO pass end-column instead of width?
   (let ((end-column (+ start-column width)))
     (make-wad 'error-wad :relative-p     nil
                          :start-line     start-line
@@ -78,12 +78,10 @@
           (lambda (condition)
             (destructuring-bind (line . column)
                 (eclector.base:stream-position condition)
-              (let* ((line-width   (line-length (cache analyzer)
-                                                (current-line-number analyzer)))
-                     (start-column (max 0 (+ column (eclector.base:position-offset condition))))
+              (let* ((start-column (max 0 (+ column (eclector.base:position-offset condition))))
                      (width        (eclector.base:range-length condition))
                      (error-wad    (make-error-wad
-                                    condition line start-column 0 width line-width)))
+                                    condition line start-column 0 width)))
                                         ; (setf (slot-value error-wad '%absolute-start-line-number) line) ;; TODO
                 (push error-wad *errors*)))
             (eclector.reader:recover))))
