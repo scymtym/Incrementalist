@@ -15,6 +15,8 @@
 ;;;             │                             │
 ;;;  cons-extra-children-mixin          children-mixin
 
+;;; `children-mixin' and `cons-extra-children-mixin'
+
 (defclass children-mixin ()
   ((%children :initarg  :children
               :type     list
@@ -84,16 +86,16 @@
 (defclass family-relations-mixin ()
   (;; This slot contains the parent wad of this wad, or NIL if this
    ;; wad is a top-level wad.
-   (%parent :initarg  :parent
-            :accessor parent
-            :initform nil)
+   (%parent        :initarg  :parent
+                   :accessor parent
+                   :initform nil)
    ;; This slot contains the left sibling wad of this wad, or NIL if
    ;; this wad is the first child of its parent.  If this wad is a
    ;; top-level wad, then this slot contains the preceding top-level
    ;; wad, or NIL if this is the first top-level wad in the buffer.
-   (%left-sibling :initarg  :left-sibling
-                  :accessor left-sibling
-                  :initform nil)
+   (%left-sibling  :initarg  :left-sibling
+                   :accessor left-sibling
+                   :initform nil)
    ;; This slot contains the right sibling wad of this wad, or NIL if
    ;; this wad is the last child of its parent.  If this wad is a
    ;; top-level wad, then this slot contains the following top-level
@@ -106,10 +108,14 @@
 ;;; is normally skipped, such as a comment or an inactive reader
 ;;; conditional.
 
-(defclass basic-wad (family-relations-mixin)
+(defclass basic-wad ()
   (;; This slot contains the cache that this wad is part of.
-   (%cache :initarg   :cache
-           :reader    cache)
+   (%cache                      :initarg  :cache
+                                :reader   cache)
+   ;; This slot contains TRUE if and only if the START-LINE slot is
+   ;; relative to some other line.
+   (%relative-p                 :initarg :relative-p
+                                :accessor relative-p)
    ;; This slot contains the absolute start line of the wad.  Its
    ;; contents is valid only when the wad is on the prefix, and when
    ;; the wad is the top-level wad which is the first on the suffix.
@@ -124,37 +130,31 @@
    ;; Simple applications might always store the absolute line number
    ;; of the first line of the wad in this slot.  Other applications
    ;; might store a line number relative to some other wad.
-   (%start-line :initarg  :start-line
-                ; :type     (integer 0)
-                :accessor start-line)
+   (%start-line                 :initarg  :start-line
+                                ; :type     (integer 0)
+                                :accessor start-line)
    ;; This slot contains the difference between the start line and the
    ;; end line.  A value of 0 indicates that the wad starts and ends
    ;; in the same line.
-   (%height :initarg :height
-            :type    (integer 0)
-            :reader  height)
+   (%height                     :initarg :height
+                                :type    (integer 0)
+                                :reader  height)
    ;; This slot contains the absolute column of the first character in
    ;; this wad.  A value of 0 indicates that this wad starts in the
    ;; leftmost position in the source code.
-   (%start-column :initarg  :start-column
-                  :type     (integer 0)
-                  :accessor start-column)
+   (%start-column               :initarg  :start-column
+                                :type     (integer 0)
+                                :accessor start-column)
    ;; This slot contains the absolute column of the last character of
    ;; the wad.  The value of this slot can never be 0.  If the last
    ;; character of the wad is the leftmost character in a line, then
    ;; this slot contains the value 1.
-   (%end-column :initarg  :end-column
-                :type     (integer 0) ; TODO 0 is used in some cases
-                :accessor end-column)
-   ;; This slot contains the absolute column that the first character
-   ;; of this wad should be positioned in, as computed by the rules of
-   ;; indentation.  If this wad is not the first one on the line, then
-   ;; this slot contains NIL.
-   (%indentation  :initarg  :indentation
-                  :accessor indentation
-                  :initform nil)))
+   (%end-column                 :initarg  :end-column
+                                :type     (integer 0) ; TODO despite what the comment says, 0 is used in some cases
+                                :accessor end-column)))
 
-(defclass wad (basic-wad)
+(defclass wad (family-relations-mixin
+               basic-wad)
   (;; This slot contains the column number of the leftmost known
    ;; non-whitespace character of the wad.  It may not be entirely
    ;; correct if a reader macro reads character by character and such
@@ -169,9 +169,6 @@
    ;; This slot contains the maximum line width of any line that is
    ;; part of the wad.
    (%max-line-width :initarg :max-line-width :reader max-line-width)
-   ;; This slot contains TRUE if and only if the START-LINE slot is
-   ;; relative to some other line.
-   (%relative-p :initarg :relative-p :accessor relative-p)
    ;; This slot stores different kind of errors which are represented
    ;; as `error-wad's. Character syntax errors as reported by Eclector
    ;; are stored in the "closest surrounding" wad. S-expression syntax
@@ -187,7 +184,14 @@
    (%errors :initarg  :errors
             :type     list
             :accessor errors
-            :initform '())))
+            :initform '())
+   ;; This slot contains the absolute column that the first character
+   ;; of this wad should be positioned in, as computed by the rules of
+   ;; indentation.  If this wad is not the first one on the line, then
+   ;; this slot contains NIL.
+   (%indentation  :initarg  :indentation
+                  :accessor indentation
+                  :initform nil)))
 
 (defun set-family-relations-of-children (wad)
   (let* ((children (children wad))
@@ -300,6 +304,25 @@
 (defun wad-contains-wad-p (wad1 wad2)
   (and (wad-starts-before-wad-p wad1 wad2)
        (wad-ends-after-wad-p wad1 wad2)))
+
+;;; `error-wad'
+;;;
+;;; Not a real wad but has the same
+
+(defclass error-wad (family-relations-mixin basic-wad) ; TODO may nod need some of the inherited slots
+  ((%condition :initarg :condition
+               :reader  condition*)))
+
+(defmethod print-object ((object error-wad) stream)
+  (print-unreadable-object (object stream :type t)
+    (print-wad-position object stream)
+    (format stream " condition: ~a"
+            (class-name (class-of (condition* object))))))
+
+(defmethod children ((wad error-wad))
+  '())
+
+(defmethod map-children ((function t) (object error-wad)))
 
 ;;; CST wads
 ;;;
@@ -631,21 +654,6 @@
 (defclass reader-macro-wad (ignored-wad)
   ())
 
-(defclass error-wad (wad) ; TODO doesn't need `%errors' slot and maybe other stuff
-  ((%condition :initarg :condition
-               :reader  condition*)))
-
-(defmethod children ((wad error-wad))
-  '())
-
-(defmethod map-children ((function t) (object error-wad)))
-
-(defmethod print-object ((object error-wad) stream)
-  (print-unreadable-object (object stream :type t)
-    (print-wad-position object stream)
-    (format stream " condition: ~a"
-            (class-name (class-of (condition* object))))))
-
 (defgeneric relative-to-absolute (wad offset)
   (:method ((wad wad) offset)
     (flet ((adjust (wad)
@@ -689,9 +697,9 @@
   absolute-wads)
 
 (defgeneric end-line (wad)
-  (:method ((p wad))
-    (assert (not (relative-p p)))
-    (+ (start-line p) (height p))))
+  (:method ((wad basic-wad))
+    (assert (not (relative-p wad)))
+    (+ (start-line wad) (height wad))))
 
 (defun compute-absolute-line-numbers (top-level-wad)
   ;; Make sure the wad itself is absolute, so that we need to compute

@@ -55,13 +55,11 @@
 
 (defun make-error-wad (condition start-line start-column height width line-width) ; TODO pass end-column instead of width?
   (let ((end-column (+ start-column width)))
-    (make-wad 'error-wad :max-line-width line-width
-                         ; :children       '()
+    (make-wad 'error-wad :relative-p     nil
                          :start-line     start-line
                          :start-column   start-column
                          :height         height
                          :end-column     end-column
-                         :relative-p     nil
 
                          :absolute-start-line-number start-line
 
