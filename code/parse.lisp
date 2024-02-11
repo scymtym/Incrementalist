@@ -259,3 +259,74 @@
                   (terpri *trace-output*))
            (push-to-prefix (cache analyzer) wad))))
       (values (cons object kind) wad)))) ; HACK
+
+;;; S-Expression Client
+
+(defclass s-expression-client (s-expression-syntax.concrete-syntax-tree::cst-client)
+  ())
+
+(defmethod s-expression-syntax.expression-grammar:typep*
+    ((client s-expression-client)
+     (thing  t)
+     (type   t))
+  (typep (s-expression-syntax.expression-grammar:naturalize client thing) type))
+
+;;; CSTs
+
+(defmethod s-expression-syntax.expression-grammar:naturalize
+    ((client s-expression-client)
+     (thing  cst:cst))
+  (cst:raw thing))
+
+(defmethod s-expression-syntax.expression-grammar:symbol-name*
+    ((client s-expression-client)
+     (symbol cst:cst)) ; not `atom-cst' because of labeled objects
+  (let ((raw (cst:raw symbol)))
+    (typecase raw
+      (symbol-token (name raw))
+      (t            (call-next-method)))))
+
+(defmethod s-expression-syntax.expression-grammar:symbol-package*
+    ((client s-expression-client)
+     (symbol cst:cst)) ; not `atom-cst' because of labeled objects
+  (let ((raw (cst:raw symbol)))
+    (typecase raw
+      (symbol-token (find-package (package-name raw)))
+      (t            (call-next-method)))))
+
+(defmethod s-expression-syntax.expression-grammar:typep*
+    ((client s-expression-client)
+     (thing  cst:cst) ; not `atom-cst' because of labeled objects
+     (type   (eql 'symbol)))
+  (let ((raw (cst:raw thing)))
+    (typecase raw
+      (symbol-token t)
+      (t            (call-next-method)))))
+
+(defmethod s-expression-syntax.expression-grammar:equal*
+    ((client s-expression-client)
+     (left   cst:cst) ; not `atom-cst' because of labeled objects
+     (right  symbol))
+  (let ((raw (cst:raw left)))
+    (typecase raw
+      (symbol-token
+       (and (string= (cl:package-name (symbol-package right))
+                     (package-name raw))
+            (string= (cl:symbol-name right)
+                     (name raw))))
+      (t
+       (call-next-method)))))
+
+(defmethod s-expression-syntax.expression-grammar:eql*
+    ((client s-expression-client)
+     (left   cst:cst) ; not `atom-cst' because of labeled objects
+     (right  symbol))
+  (let ((raw (cst:raw left)))
+    (typecase raw
+      (symbol-token
+       (and (string= (cl:package-name (symbol-package right))
+                     (package-name raw))
+            (string= (cl:symbol-name right)
+                     (name raw))))
+      (t
+       (call-next-method)))))

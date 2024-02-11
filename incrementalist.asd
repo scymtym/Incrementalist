@@ -9,10 +9,15 @@
   :depends-on  ("trivial-gray-streams"
                 "cluffer"
                 "flexichain"
+
                 "concrete-syntax-tree"
                 "eclector"
                 "eclector-concrete-syntax-tree"
-                "spell")
+
+                "spell"
+
+                "s-expression-syntax"
+                "s-expression-syntax.concrete-syntax-tree")
 
   :components  ((:module "code"
                  :serial      t
