@@ -204,9 +204,10 @@
          (when (null wad)
            (assert (eq kind :skip)))
          (when wad
-           (let ((*print-right-margin* 60)
-                 (*print-pretty* t))
-             (format *trace-output* "Errors: ~S~%" *errors*))
+           (when *errors*
+             (let ((*print-right-margin* 60)
+                   (*print-pretty* t))
+               (format *trace-output* "Errors: ~S~%" *errors*)))
            #+no (compute-absolute-line-numbers wad)
            #+no (add-extra-children wad *errors*)
            #+no (progn
@@ -244,7 +245,10 @@
                                  (unless (every #'relative-p errors)
                                    (mapc (alexandria:rcurry #'absolute-to-relative (start-line wad))))))
                         )))
-             (rec wad))
+             (handler-bind ((error (lambda (condition)
+                                     ; (clouseau:inspect wad :new-process t)
+                                     )))
+               (rec wad)))
 
            #+no (progn
                   (format *trace-output* "After making relative~%")

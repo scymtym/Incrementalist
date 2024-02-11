@@ -123,7 +123,8 @@
     (let* ((line-number    (current-line-number stream))
            (max-line-width (compute-max-line-width
                             stream start-line line-number '())))
-      (apply #'change-class cst class :start-line     start-line
+      (apply #'change-class cst class :cache          *cache*
+                                      :start-line     start-line
                                       :height         (- end-line start-line)
                                       :start-column   start-column
                                       :end-column     end-column
@@ -244,6 +245,7 @@
                (max-line-width (compute-max-line-width
                                 stream start-line line-number '())))
           (change-class cst new-class
+                        :cache          *cache*
                         :start-line     start-line
                         :height         (- end-line start-line)
                         :start-column   start-column
@@ -283,8 +285,13 @@
                                                     cst)
                                       nil) ; TODO do not call children repeatedly
                               :collect child)))
+      (format *trace-output* "Result         ~A~%CST children   ~:A~%Extra children ~:A~%WAD children   ~:A~%Orphans        ~:A~%"
+              cst cst-children extra-children (when (children cst)) orphans)
       (assert (not (typep cst 'wad)))
-      (adjust-result cst new-class (stream* client) source (append extra-children orphans)))))
+      (adjust-result cst new-class (stream* client) source
+                     (sort (append extra-children orphans) #'< ; TODO HACK
+                           :key (lambda (child)
+                                  (position child children)))))))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client   client)
@@ -336,7 +343,7 @@
     (if source
         (etypecase result
           (cst:atom-cst
-           (make-cst-wad result 'atom-wad (stream* client) source))
+           (make-cst-wad result 'atom-wad (stream* client) source)) ; TODO can this use `adjust-result-class'?
           (cst:cons-cst
            (make-cst-wad result 'cons-wad (stream* client) source)))
         result)))
