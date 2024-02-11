@@ -17,6 +17,29 @@
 
 ;;; `children-mixin' and `cons-extra-children-mixin'
 
+(defmethod map-children :around ((function t) (node t))
+  (let ((seen     (make-hash-table :test #'eq))
+        (previous nil))
+    (flet ((do-it (child)
+             ;; Duplicates
+             (assert (not (gethash child seen)))
+             (setf (gethash child seen) t)
+             ;; Buffer location order
+             (when previous
+               ;; TODO would be nice to assert this
+               ;; (assert (wad-ends-after-wad-p previous child))
+               )
+             (setf previous child)
+             ;; Original function
+             (funcall function child)))
+      (call-next-method #'do-it node))))
+
+(defmethod children ((node t))
+  ;; TODO maybe cache this?
+  (let ((result '()))
+    (map-children (lambda (child) (push child result)) node)
+    (nreverse result)))
+
 (defclass children-mixin ()
   ((%children :initarg  :children
               :type     list
@@ -478,23 +501,23 @@
          (distribute-extra-cons-children result extra-children)
        #+no (when before-first
 
-         (let ((existing-children (typecase result
-                                    (children-mixin
-                                     (children result))
-                                    (cst:cons-cst
-                                     (change-class result 'cons-with-children)
-                                     '()))))
-           (typecase result
-             (children-mixin
-              (setf (children result)
-                    (if (null existing-children)
-                        before-first
-                        (merge 'list
-                               before-first
-                               (copy-list existing-children)
-                               (lambda (child1 child2)
-                                 (wad-starts-before-wad-p child1 child2))))))
-             )))
+              (let ((existing-children (typecase result
+                                         (children-mixin
+                                          (children result))
+                                         (cst:cons-cst
+                                          (change-class result 'cons-with-children)
+                                          '()))))
+                (typecase result
+                  (children-mixin
+                   (setf (children result)
+                         (if (null existing-children)
+                             before-first
+                             (merge 'list
+                                    before-first
+                                    (copy-list existing-children)
+                                    (lambda (child1 child2)
+                                      (wad-starts-before-wad-p child1 child2))))))
+                  )))
        (when (or before-first before-rest remaining)
          (unless (typep result 'cons-extra-children-mixin)
            (change-class result 'cons-with-children))
@@ -504,8 +527,22 @@
                                                          '()
                                                          remaining)))
        (when in-first
-         (break)
-         ; (add-extra-children (cst:first result) in-first)
+         (warn "cannot add children ~S to~@
+                ~A~@
+                ~2@Tfirst  ~A~@
+                ~2@Tsecond ~A"
+               in-first result (cst:first result) (cst:rest result))
+                                        ; (break)
+         #+no (clouseau:inspect
+          (list (cons :result result)
+                (cons :before-first before-first)
+                (cons :before-first before-first)
+                (cons :in-first in-first)
+                (cons :before-rest before-rest)
+                (cons :in-rest in-rest)
+                (cons :remaining remaining)))
+
+                                        ; (add-extra-children (cst:first result) in-first)
          )
        (when (or in-rest (and (typep (cst:rest result) 'cst:cons-cst) remaining))
          (let ((rest (cst:rest result)))
@@ -516,78 +553,102 @@
                                                         '())))))
        result))))
 
-;;; This method must return only children which are WADs and thus have
-;;; source information.
 (defmethod children ((wad cons-wad))
   ;; TODO maybe cache this?
-  ;; TODO implement `map-children' instead?
-  #+old (let ((result '()))
-    (flet ((visit-cons (node)
-             #+no (when (typep node 'children-mixin)
-               (alexandria:appendf result (extra-children node)))
-             (when (typep node 'cons-extra-children-mixin)
-               (alexandria:appendf result (before-first node)))
-             (let ((first (cst:first node)))
-               (when (typep first 'wad)
-                 (alexandria:appendf result (list first))))
-             (when (typep node 'cons-extra-children-mixin)
-               (alexandria:appendf result (middle node))))
-           (visit-atom (node)
-             (typecase node
-               (wad ; dotted list
-                (alexandria:appendf result (list node)))
-               (atom-with-children
-                (alexandria:appendf result (children node))))))
-     (loop for previous = nil then node
-           for node = wad then (cst:rest node)
-           if (cst:consp node)
-             do (visit-cons node)
-                (when (and previous
-                           (typep previous 'cons-extra-children-mixin))
-                  (alexandria:appendf result (after-rest previous)))
-           else ; if (not (cst:null node))
-             do (visit-atom node)
-                (when (and previous
-                           (typep previous 'cons-extra-children-mixin))
-                  (alexandria:appendf result (after-rest previous)))
-                (loop-finish)
-           ; else
-             ; do (loop-finish)
-           ))
-    result)
   (let ((result '()))
     (map-children (lambda (child) (push child result)) wad)
     (nreverse result)))
 
-(defmethod map-children ((function t) (wad cst:cons-cst))
+;;; This method must apply the function only to children which are
+;;; WADs and thus have source information.
+#+old (defmethod map-children ((function t) (wad cst:cons-cst))
   (let ((function (alexandria:ensure-function function)))
-    (flet ((visit-cons (node)
+    (flet ((visit-cons (node dotted?)
              (when (typep node 'cons-extra-children-mixin)
-               (mapcar function (before-first node)))
+               (mapc function (before-first node)))
              (let ((first (cst:first node)))
                (when (typep first 'wad)
                  (funcall function first)))
              (when (typep node 'cons-extra-children-mixin)
-               (mapcar function (middle node))))
+               (mapc function (middle node)))
+             (when dotted?
+               (let ((rest (cst:rest node)))
+                 (when (typep rest 'wad)
+                   (funcall function rest)))))
            (visit-atom (node)
              (typecase node
-               (wad ; dotted list
+               (wad ; dotted list TODO explain
                 (funcall function node))
                (atom-with-children
                 (map-children function node)))))
       (loop for previous = nil then node
             for node = wad then (cst:rest node)
             if (cst:consp node)
-              do (visit-cons node)
-                 (when (and previous
-                            (typep previous 'cons-extra-children-mixin))
-                   (mapcar function (after-rest previous)))
+              do (let ((dotted?    (not (or (cst:consp (cst:rest node))
+                                            (cst:null (cst:rest node)))))
+                       (wad-child? (and (not (eq node wad)) (typep node 'wad))))
+                   (if wad-child?
+                       (funcall function node)
+                       (visit-cons node dotted?))
+                   (when (and previous
+                              (typep previous 'cons-extra-children-mixin))
+                     (mapc function (after-rest previous)))
+                   (when dotted?
+                     (when (not wad-child?)
+                       (when (typep node 'cons-extra-children-mixin)
+                         (mapc function (after-rest node))))
+                     (loop-finish)))
             else ; if (not (cst:null node))
               do (visit-atom node)
                  (when (and previous
                             (typep previous 'cons-extra-children-mixin))
-                   (mapcar function (after-rest previous)))
+                   (mapc function (after-rest previous)))
                  (loop-finish)))))
+
+(defmethod map-children ((function t) (wad cst:cons-cst))
+  (let ((function (alexandria:ensure-function function)))
+    (flet ((visit-cons (node dotted?)
+             (when (typep node 'cons-extra-children-mixin)
+               (mapc function (before-first node)))
+             (let ((first (cst:first node)))
+               (when (typep first 'wad)
+                 (funcall function first)))
+             (when (typep node 'cons-extra-children-mixin)
+               (mapc function (middle node)))
+             (when dotted?
+               (let ((rest (cst:rest node)))
+                 (when (typep rest 'wad)
+                   (funcall function rest)))))
+           (visit-atom (node)
+             (typecase node
+               (wad ; dotted list TODO explain
+                (funcall function node))
+               (atom-with-children
+                (map-children function node)))))
+      (loop for previous = nil then node
+            for node = wad then (cst:rest node)
+            do (when (and previous
+                          (typep previous 'cons-extra-children-mixin))
+                 (mapc function (after-rest previous)))
+            if (cst:consp node)
+              do (let ((dotted?    (not (or (cst:consp (cst:rest node))
+                                            (cst:null (cst:rest node)))))
+                       (wad-child? (and (not (eq node wad)) (typep node 'wad))))
+                   (if wad-child?
+                       (funcall function node)
+                       (visit-cons node dotted?))
+                   (when dotted?
+                     #+maybe (when (not wad-child?)
+                       (when (typep node 'cons-extra-children-mixin)
+                         (mapc function (after-rest node))))
+                     (loop-finish)))
+            else ; if (not (cst:null node))
+              do (visit-atom node)
+                 (when (typep node 'cons-extra-children-mixin)
+                   (mapc function (after-rest node)))
+                 (loop-finish))
+      (when (typep wad 'cons-extra-children-mixin)
+        (mapc function (after-rest wad))))))
 
 ;;; Definition and reference wads
 
