@@ -3,6 +3,8 @@
    #:cl)
 
   (:local-nicknames
+   (#:a   #:alexandria)
+
    (#:inc #:incrementalist))
 
   (:import-from #:fiveam
