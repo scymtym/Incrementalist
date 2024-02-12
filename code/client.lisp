@@ -116,25 +116,6 @@
 
                               extra-initargs))))
 
-(defun make-cst-wad (cst class stream source
-                     &rest extra-initargs &key &allow-other-keys)
-  (destructuring-bind ((start-line . start-column) . (end-line . end-column))
-      source
-    (let* ((line-number    (current-line-number stream))
-           (max-line-width (compute-max-line-width
-                            stream start-line line-number '())))
-      (apply #'change-class cst class :cache          *cache*
-                                      :start-line     start-line
-                                      :height         (- end-line start-line)
-                                      :start-column   start-column
-                                      :end-column     end-column
-                                      :relative-p     nil
-                                      :max-line-width max-line-width
-
-                                      :absolute-start-line-number start-line
-
-                                      extra-initargs))))
-
 (defun make-word-wads (stream source
                        &key (start-column-offset 0)
                             (end-column-offset   0 end-column-offset-p))
@@ -237,25 +218,25 @@
       (call-next-method)))
 
 (defun adjust-result-class (cst new-class stream source)
-  (if (null source)
-      cst
-      (destructuring-bind ((start-line . start-column) . (end-line . end-column))
-          source
-        (let* ((line-number    (current-line-number stream))
-               (max-line-width (compute-max-line-width
-                                stream start-line line-number '())))
-          (change-class cst new-class
-                        :cache          *cache*
-                        :start-line     start-line
-                        :height         (- end-line start-line)
-                        :start-column   start-column
-                        :end-column     end-column
-                        :relative-p     nil
-                        :max-line-width max-line-width
-                        :absolute-start-line-number start-line)))))
+  (destructuring-bind ((start-line . start-column) . (end-line . end-column))
+      source
+    (let* ((line-number    (current-line-number stream))
+           (max-line-width (compute-max-line-width
+                            stream start-line line-number '())))
+      (change-class cst new-class
+                    :cache          *cache*
+                    :start-line     start-line
+                    :height         (- end-line start-line)
+                    :start-column   start-column
+                    :end-column     end-column
+                    :relative-p     nil
+                    :max-line-width max-line-width
+                    :absolute-start-line-number start-line))))
 
 (defun adjust-result (cst new-class stream source extra-children)
-  (let ((result (adjust-result-class cst new-class stream source)))
+  (let ((result (if (null source)
+                    cst
+                    (adjust-result-class cst new-class stream source))))
     (when extra-children
       (add-extra-children result extra-children)
       ;; There may be "indirect" children of the form
@@ -340,10 +321,10 @@
   (declare (ignore default-source))
   (let* ((result (call-next-method))
          (source (cst:source result)))
-    (if source
+    (if (null source)
+        result
         (etypecase result
           (cst:atom-cst
-           (make-cst-wad result 'atom-wad (stream* client) source)) ; TODO can this use `adjust-result-class'?
+           (adjust-result-class result 'atom-wad (stream* client) source))
           (cst:cons-cst
-           (make-cst-wad result 'cons-wad (stream* client) source)))
-        result)))
+           (adjust-result-class result 'cons-wad (stream* client) source))))))
