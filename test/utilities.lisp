@@ -4,6 +4,15 @@
 
 (defpackage incrementalist.test.test-package (:use))
 
+(defun buffer-string (buffer)
+  (with-output-to-string (stream)
+    (loop :for line-number :below (cluffer:line-count buffer)
+          :for line        =      (cluffer:find-line buffer line-number)
+          :for content     =      (cluffer:items line)
+          :unless (zerop line-number)
+            :do (terpri stream)
+          :do (map nil (a:rcurry #'write-char stream) content))))
+
 (defun prepared-buffer (content)
   (let* ((line   (make-instance 'cluffer-standard-line:open-line))
          (buffer (make-instance 'cluffer-standard-buffer:buffer :initial-line line))
@@ -53,49 +62,59 @@
 
 ;;; Predicates
 
-(defun is-sequence (child-predicate expected-sequence actual-sequence result-info label)
+(defun is-sequence (child-predicate expected-sequence actual-sequence result-info label
+                    &key input)
   (let ((label-control (concatenate 'string "~1:*" label "~*")))
     (is (= (length expected-sequence) (length actual-sequence))
-        "~@<For result~@:_~@:_~
+        "~@<For~@[ input~@:_~@:_~
+         ~S~
+         ~@:_~@:_ and~] result~@:_~@:_~
          ~/incrementalist.test::format-node/~
          ~@:_~@:_expected the wad to have ~D ~@? but it has ~D ~@?.~@:>"
-        result-info
+        input result-info
         (length expected-sequence) label-control
         (length actual-sequence)   label-control))
   (mapc child-predicate expected-sequence actual-sequence))
 
-(defun is-wad-data (expected-type expected-location wad result-info)
+(defun is-wad-data (expected-type expected-location wad result-info
+                    &key input)
   (is (typep wad expected-type)
-      "~@<For result~@:_~@:_~
+      "~@<For~@[ input~@:_~@:_~
+       ~S~
+       ~@:_~@:_ and~] result~@:_~@:_~
        ~/incrementalist.test::format-node/~
        ~@:_~@:_expected the wad to be of type ~A but it is of type ~A.~@:>"
-      result-info expected-type (class-name (class-of wad)))
+      input result-info expected-type (class-name (class-of wad)))
   (let* ((start-line      (inc:absolute-start-line-number wad))
          (end-line        (+ start-line (inc:height wad)))
          (actual-location (list (list start-line (inc:start-column wad))
                                 (list end-line   (inc:end-column wad)))))
     (is (equal expected-location actual-location)
-        "~@<For result~@:_~@:_~
+        "~@<For~@[ input~@:_~@:_~
+         ~S~
+         ~@:_~@:_ and~] result~@:_~@:_~
          ~/incrementalist.test::format-node/~
          ~@:_~@:_expected location of the wad to be ~S but its location is ~
          ~S.~@:>"
-        result-info expected-location actual-location)))
+        input result-info expected-location actual-location)))
 
-(defun is-error (expected-error wad result-info)
+(defun is-error (expected-error wad result-info &key input)
   (let ((result-info (cons (car result-info) wad)))
     (destructuring-bind (expected-location expected-condition-type) expected-error
       (is-wad-data 'inc::error-wad expected-location wad result-info)
       (let ((condition (inc::condition* wad)))
         (is (typep condition expected-condition-type)
-            "~@<For result~@:_~@:_~
+            "~@<For~@[ input~@:_~@:_~
+             ~S~
+             ~@:_~@:_ and~] result~@:_~@:_~
              ~/incrementalist.test::format-node/~
              ~@:_~@:_expected the condition in the error wad to be of type ~
              ~A but it is of type ~A.~@:>"
-            result-info
+            input result-info
             expected-condition-type
             (class-name (class-of condition)))))))
 
-(defun is-result (expected root-result)
+(defun is-result (expected root-result &key input)
   (labels
       ((rec (expected result)
          (destructuring-bind
@@ -114,9 +133,10 @@
              (is-sequence (lambda (expected-error actual-error)
                             (is-error expected-error actual-error result-info))
                           expected-errors (inc::errors result)
-                          result-info "error~:P")
+                          result-info "error~:P" :input input)
              ;; Assertions for raw value
-             (when expected-raw-supplied?
+             (when (and expected-raw-supplied?
+                        (typep result expected-type))
                (let ((raw (cst:raw result)))
                  (destructuring-bind (expected-type
                                       &key ((:value expected-value)
@@ -137,28 +157,57 @@
                              (actual-name         (inc::name raw)))
                          (is (string= expected-package-name
                                       actual-package-name)
-                             "~@<For result~@:_~@:_~
+                             "~@<For ~@[input~@:_~@:_~
+                              ~S~
+                              ~@:_~@:_, and~] result~@:_~@:_~
                               ~/incrementalist.test::format-node/~
                               ~@:_~@:_expected symbol token of the ~
                               node to have package name ~S but the ~
                               package name is ~S.~@:>"
-                             result-info expected-package-name actual-package-name)
+                             input result-info expected-package-name actual-package-name)
                          (is (string= expected-name actual-name)
-                             "~@<For result~@:_~@:_~
+                             "~@<For ~@[input~@:_~@:_~
+                              ~S~
+                              ~@:_~@:_, and~] result~@:_~@:_~
                               ~/incrementalist.test::format-node/~
                               ~@:_~@:_expected symbol token of the ~
                               node to have package name ~S but the ~
                               package name is ~S.~@:>"
-                             result-info expected-name actual-name)))))))
+                             input result-info expected-name actual-name)))))))
              ;; Recursively check children
              (is-sequence #'rec expected-children (inc:children result)
-                          result-info "~:*child~[ren~;~:;ren~]")))))
+                          result-info "~:*child~[ren~;~:;ren~]" :input input)))))
     (rec expected root-result)))
 
-(defun are-results (expected-results actual-results)
+(defun are-results (expected-results actual-results &key input)
   (is (= (length expected-results) (length actual-results))
-      "~@<Expected ~D result~:P there are ~D result~:P.~@:>"
-      (length expected-results) (length actual-results))
+      "~@<~@[For input~@:_~@:_~
+       ~S~
+       ~@:_~@:_,~] expected ~D result~:P there are ~D result~:P.~@:>"
+      input (length expected-results) (length actual-results))
   (mapc (lambda (expected-result actual-result)
-          (is-result expected-result actual-result))
+          (is-result expected-result actual-result :input input))
         expected-results actual-results))
+
+;;; Utilities for analysis test cases
+
+(defun expected-consing-dot (location)
+  `(inc::atom-wad ,location (:raw (symbol)))) ; TODO make this a token?
+
+(defun expected-symbol-wad (location symbol-name
+                            &key (package-name "INCREMENTALIST.TEST.TEST-PACKAGE")
+                                 (token-class  'inc:non-existing-symbol-token)
+                                 (words        `((inc::word-wad ,location))))
+  `(inc::atom-wad ,location
+    (:raw (,token-class :symbol (,package-name ,symbol-name)))
+    ,@words))
+
+(defun analysis-test-case (input expected-result)
+  (are-results expected-result (parse-result input) :input input))
+
+(defmacro analysis-cases (() &body cases)
+  `(progn
+     ,@(mapcar (lambda (case)
+                 (destructuring-bind (input expected-result) case
+                   `(analysis-test-case ,input ,expected-result)))
+               cases)))
