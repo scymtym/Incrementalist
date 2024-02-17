@@ -130,7 +130,7 @@
    ;; so that the wad of the argument will always be on the prefix
    ;; when the absolute line number is asked for.
    (%absolute-start-line-number :initarg  :absolute-start-line-number
-                                :type     (integer 0)
+                                :type     (or (eql :invalid) (integer 0))
                                 :accessor absolute-start-line-number) ; TODO rename to absolute-start-line
    ;; This slot contains information about the start line of the wad.
    ;; Simple applications might always store the absolute line number
@@ -207,6 +207,8 @@
   (let* ((children (children wad))
          (length   (length children)))
     (loop for child in children
+          do (assert (or (null (parent child))
+                         (eq (parent child) wad)))
           do (setf (parent child) wad))
     (when (plusp length)
       (setf (left-sibling  (first children))        nil
@@ -374,268 +376,210 @@
                     cst:cons-cst) ; TODO we inherit the `%source' slot which we do not use
   ())
 
+;;; TODO Add a class `cons-wad-with-extra-children' so that we can
+;;;      have a `cons-wad' (without extra children) and a simple
+;;;      `map-children' method
+;;; TODO `error-location' does something very similar
+(defun cst-node-location (child)
+  (labels ((rec (node)
+             (typecase node
+               (wad
+                (let* ((start-line (absolute-start-line-number node))
+                       (end-line   (+ start-line (height node))))
+                  (values start-line (start-column node)
+                          end-line   (end-column node))))
+               (cst:cons-cst            ; TODO use `cst:consp'?
+                (multiple-value-bind (first-start-line first-start-column
+                                      first-end-line   first-end-column)
+                    (rec (cst:first node))
+                  (multiple-value-bind (rest-start-line rest-start-column
+                                        rest-end-line   rest-end-column)
+                      (rec (cst:rest node))
+                    (cond ((and first-start-line rest-start-line)
+                           (values first-start-line first-start-column
+                                   rest-end-line    rest-end-column))
+                          (first-start-line
+                           (values first-start-line first-start-column
+                                   first-end-line    first-end-column))
+                          (rest-start-line
+                           (values rest-start-line rest-start-column
+                                   rest-end-line   rest-end-column)))))))))
+    (rec child)))
+
 ;;; EXTRA-CHILDREN are non-CST children like comments and other
 ;;; skipped material.
 (defun distribute-extra-cons-children (result extra-children)
   (check-type result cst:cons-cst)
   (assert (not (null extra-children)))
-  (let* ((first              (let ((first (cst:first result)))
-                               (cond ((typep first 'wad)
-                                      first)
-                                     ((and (typep first 'cst:cons-cst)
-                                           (typep (cst:first first) 'wad))
-                                      (cst:first first)))))
-         (first-start-line   (when first (absolute-start-line-number first)))
-         (first-start-column (when first (start-column first)))
-         (first-end-line     (when first (+ first-start-line (height first))))
-         (first-end-column   (when first (end-column first)))
-         (rest               (let ((rest (cst:rest result)))
-                               (cond ((typep rest 'wad)
-                                      rest)
-                                     ((and (typep rest 'cst:cons-cst)
-                                           (typep (cst:first rest) 'wad))
-                                      (cst:first rest)))))
-         (rest-start-line    (when rest (absolute-start-line-number rest)))
-         (rest-start-column  (when rest (start-column rest)))
-         (rest-end-line      (when rest (+ rest-start-line (height rest))))
-         (rest-end-column    (when rest (end-column rest))))
-                                        ; (assert (not (relative-p cst-child)))
-    (let ((before-first '())
-          (in-first     '())
-          (before-rest  '())
-          (in-rest      '())
-          (remainder    extra-children))
-      (when first
-        ;; Before first child
-        (loop for extra-child = (first remainder)
-                                        ; do (assert (not (relative-p extra-child))) ; TODO
-              while (and extra-child
-                         (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
-                           (or (< end-line first-start-line)
-                               (and (= end-line first-start-line)
-                                    (<= (end-column extra-child) first-start-column)))))
-              do (push extra-child before-first)
-                 (pop remainder))
-        ;; Overlapping first child
-        (loop for extra-child = (first remainder)
-                                        ; do (assert (not (relative-p extra-child))) ; TODO
-              while (and extra-child
-                         (or (< (absolute-start-line-number extra-child) first-start-line)
-                             (and (= (absolute-start-line-number extra-child) first-start-line)
-                                  (< (start-column extra-child) first-start-column))))
-              do (warn "Dropping ~S ~S" extra-child first)
-                 (pop remainder))
-        ;; Contained in first child
-        (loop for extra-child = (first remainder)
-                                        ; do (assert (not (relative-p extra-child))) ; TODO
-              while (and extra-child
-                         (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
-                           (or (< end-line first-end-line)
-                               (and (= end-line first-end-line)
-                                    (<= (end-column extra-child) first-end-column)))))
-              do (push extra-child in-first)
-                 (pop remainder)))
-      (when rest
-        ;; Before rest child
-        (loop for extra-child = (first remainder)
-                                        ; do (assert (not (relative-p extra-child))) ; TODO
-              while (and extra-child
-                         (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
-                           (or (< end-line rest-start-line)
-                               (and (= end-line rest-start-line)
-                                    (<= (end-column extra-child) rest-start-column)))))
-              do (push extra-child before-rest)
-                 (pop remainder))
-        ;; Overlapping rest
-        (loop for extra-child = (first remainder)
-                                        ; do (assert (not (relative-p extra-child))) ; TODO
-              while (and extra-child
-                         (or (< (absolute-start-line-number extra-child) rest-start-line)
-                             (and (= (absolute-start-line-number extra-child) rest-start-line)
-                                  (< (start-column extra-child) rest-start-column))))
-              do (warn "Dropping ~S ~S" extra-child rest)
-                 (pop remainder))
-        ;; Contained in rest child
-        (loop for extra-child = (first remainder)
-                                        ; do (assert (not (relative-p extra-child))) ; TODO
-              while (and extra-child
-                         (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
-                           (or (< end-line rest-end-line)
-                               (and (= end-line rest-end-line)
-                                    (<= (end-column extra-child) rest-end-column)))))
-              do (push extra-child in-first)
-                 (pop remainder)))
-      (values (nreverse before-first) (nreverse in-first) (nreverse before-rest) (nreverse in-rest) remainder))
-    #+old (let ((index (position-if (lambda (non-cst-child)
-                                      (assert (not (relative-p non-cst-child)))
-                                      (or (> (absolute-start-line-number non-cst-child) child-start-line)
-                                          (and (= (absolute-start-line-number non-cst-child) child-start-line)
-                                               (> (start-column non-cst-child) child-start-column))))
-                                    extra-children)))
-            (if index
-                (values (subseq extra-children 0 index)
-                        (subseq extra-children index))
-                (values extra-children '())))))
+  (multiple-value-bind (first-start-line first-start-column
+                        first-end-line   first-end-column)
+      (cst-node-location (cst:first result))
+    (multiple-value-bind (rest-start-line rest-start-column
+                          rest-end-line   rest-end-column)
+        (cst-node-location (cst:rest result))
+      (let ((remainder    extra-children)
+            (before-first '())
+            (in-first     '())
+            (before-rest  '())
+            (in-rest      '()))
+        (when first-start-line
+          ;; Before first child
+          (loop for extra-child = (first remainder)
+                while (and extra-child
+                           (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
+                             (or (< end-line first-start-line)
+                                 (and (= end-line first-start-line)
+                                      (<= (end-column extra-child) first-start-column)))))
+                do (push extra-child before-first)
+                   (pop remainder))
+          ;; Overlapping first child
+          (loop for extra-child = (first remainder)
+                while (and extra-child
+                           (or (< (absolute-start-line-number extra-child) first-start-line)
+                               (and (= (absolute-start-line-number extra-child) first-start-line)
+                                    (< (start-column extra-child) first-start-column))))
+                do (warn "~@<Dropping ~S~@:_~2@Tfrom ~S~@:_~2@Tat ~S~@:_~2@TFIRST of ~A~@:>"
+                         extra-child
+                         (cst:first result)
+                         (cst:source (cst:first result))
+                         result)
+                   (pop remainder))
+          ;; Contained in first child
+          (loop for extra-child = (first remainder)
+                while (and extra-child
+                           (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
+                             (or (< end-line first-end-line)
+                                 (and (= end-line first-end-line)
+                                      (<= (end-column extra-child) first-end-column)))))
+                do (push extra-child in-first)
+                   (pop remainder)))
+        (when rest-start-line
+          ;; Before rest child
+          (loop for extra-child = (first remainder)
+                while (and extra-child
+                           (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
+                             (or (< end-line rest-start-line)
+                                 (and (= end-line rest-start-line)
+                                      (<= (end-column extra-child) rest-start-column)))))
+                do (push extra-child before-rest)
+                   (pop remainder))
+          ;; Overlapping rest
+          (loop for extra-child = (first remainder)
+                while (and extra-child
+                           (or (< (absolute-start-line-number extra-child) rest-start-line)
+                               (and (= (absolute-start-line-number extra-child) rest-start-line)
+                                    (< (start-column extra-child) rest-start-column))))
+                do (warn "~@<Dropping ~S~@:_~2@Tfrom ~S~@:_~2@Tat ~S~@:_~2@TREST of ~A~@:>"
+                         extra-child
+                         (cst:rest result)
+                         (cons (cons rest-start-line rest-start-column)
+                               (cons rest-end-line rest-end-column))
+                         result)
+                   (pop remainder))
+          ;; Contained in rest child
+          (loop for extra-child = (first remainder)
+                while (and extra-child
+                           (let ((end-line (+ (absolute-start-line-number extra-child) (height extra-child))))
+                             (or (< end-line rest-end-line)
+                                 (and (= end-line rest-end-line)
+                                      (<= (end-column extra-child) rest-end-column)))))
+                do (push extra-child in-rest)
+                   (pop remainder)))
+        (values (nreverse before-first) (nreverse in-first) (nreverse before-rest) (nreverse in-rest) remainder)))))
 
-(defun add-extra-children (result extra-children)
+;;; TODO just return initargs here. `adjust-result' should pick up the initargs and do all change-class/reinitialize actions at once
+(defun add-extra-children (result extra-children wrap-around)
   (typecase result
     (cst:atom-cst
-     (unless (typep result 'children-mixin)
-       (change-class result 'atom-with-children))
-     (reinitialize-instance result :children extra-children))
+     (assert (null wrap-around))
+     (if (typep result 'children-mixin)
+         (reinitialize-instance result :children extra-children)
+         (change-class result 'atom-with-children :children extra-children)))
     (cst:cons-cst
      (multiple-value-bind (before-first in-first before-rest in-rest remaining)
-         (distribute-extra-cons-children result extra-children)
-       #+no (when before-first
-
-              (let ((existing-children (typecase result
-                                         (children-mixin
-                                          (children result))
-                                         (cst:cons-cst
-                                          (change-class result 'cons-with-children)
-                                          '()))))
-                (typecase result
-                  (children-mixin
-                   (setf (children result)
-                         (if (null existing-children)
-                             before-first
-                             (merge 'list
-                                    before-first
-                                    (copy-list existing-children)
-                                    (lambda (child1 child2)
-                                      (wad-starts-before-wad-p child1 child2))))))
-                  )))
+         (if wrap-around
+             (values '() '() extra-children '() '())
+             (distribute-extra-cons-children result extra-children))
        (when (or before-first before-rest remaining)
-         (unless (typep result 'cons-extra-children-mixin)
-           (change-class result 'cons-with-children))
-         (reinitialize-instance result :before-first before-first
-                                       :middle       before-rest
-                                       :after-rest   (if (typep (cst:rest result) 'cst:cons-cst)
-                                                         '()
-                                                         remaining)))
+         (if (typep result 'cons-extra-children-mixin)
+             (reinitialize-instance result :before-first before-first
+                                           :middle       before-rest
+                                           :after-rest   remaining)
+             (change-class result 'cons-with-children :before-first before-first
+                                                      :middle       before-rest
+                                                      :after-rest   remaining)))
        (when in-first
-         (warn "cannot add children ~S to~@
-                ~A~@
-                ~2@Tfirst  ~A~@
-                ~2@Tsecond ~A"
-               in-first result (cst:first result) (cst:rest result))
-                                        ; (break)
-         #+no (clouseau:inspect
-          (list (cons :result result)
-                (cons :before-first before-first)
-                (cons :before-first before-first)
-                (cons :in-first in-first)
-                (cons :before-rest before-rest)
-                (cons :in-rest in-rest)
-                (cons :remaining remaining)))
-
-                                        ; (add-extra-children (cst:first result) in-first)
-         )
-       (when (or in-rest (and (typep (cst:rest result) 'cst:cons-cst) remaining))
-         (let ((rest (cst:rest result)))
-           ;; TODO first cst:first contains a cons-cst, try to add children there?
-           ;; for something like ((a #|x|# b) . (c d)) maybe?
-           (add-extra-children rest (append in-rest (if (typep (cst:rest result) 'cst:cons-cst)
-                                                        remaining
-                                                        '())))))
+         (break "cannot add children ~S to~@
+                 ~A~@
+                 ~2@Tfirst  ~A~@
+                 ~2@Tsecond ~A"
+                in-first result (cst:first result) (cst:rest result)))
+       (when in-rest
+         ;; TODO first cst:first contains a cons-cst, try to add children there?
+         ;; for something like ((a #|x|# b) . (c d)) maybe?
+         (add-extra-children (cst:rest result) in-rest nil))
        result))))
-
-(defmethod children ((wad cons-wad))
-  ;; TODO maybe cache this?
-  (let ((result '()))
-    (map-children (lambda (child) (push child result)) wad)
-    (nreverse result)))
-
-;;; This method must apply the function only to children which are
-;;; WADs and thus have source information.
-#+old (defmethod map-children ((function t) (wad cst:cons-cst))
-  (let ((function (alexandria:ensure-function function)))
-    (flet ((visit-cons (node dotted?)
-             (when (typep node 'cons-extra-children-mixin)
-               (mapc function (before-first node)))
-             (let ((first (cst:first node)))
-               (when (typep first 'wad)
-                 (funcall function first)))
-             (when (typep node 'cons-extra-children-mixin)
-               (mapc function (middle node)))
-             (when dotted?
-               (let ((rest (cst:rest node)))
-                 (when (typep rest 'wad)
-                   (funcall function rest)))))
-           (visit-atom (node)
-             (typecase node
-               (wad ; dotted list TODO explain
-                (funcall function node))
-               (atom-with-children
-                (map-children function node)))))
-      (loop for previous = nil then node
-            for node = wad then (cst:rest node)
-            if (cst:consp node)
-              do (let ((dotted?    (not (or (cst:consp (cst:rest node))
-                                            (cst:null (cst:rest node)))))
-                       (wad-child? (and (not (eq node wad)) (typep node 'wad))))
-                   (if wad-child?
-                       (funcall function node)
-                       (visit-cons node dotted?))
-                   (when (and previous
-                              (typep previous 'cons-extra-children-mixin))
-                     (mapc function (after-rest previous)))
-                   (when dotted?
-                     (when (not wad-child?)
-                       (when (typep node 'cons-extra-children-mixin)
-                         (mapc function (after-rest node))))
-                     (loop-finish)))
-            else ; if (not (cst:null node))
-              do (visit-atom node)
-                 (when (and previous
-                            (typep previous 'cons-extra-children-mixin))
-                   (mapc function (after-rest previous)))
-                 (loop-finish)))))
 
 (defmethod map-children ((function t) (wad cst:cons-cst))
   (let ((function (alexandria:ensure-function function)))
-    (flet ((visit-cons (node dotted?)
-             (when (typep node 'cons-extra-children-mixin)
-               (mapc function (before-first node)))
-             (let ((first (cst:first node)))
-               (when (typep first 'wad)
-                 (funcall function first)))
-             (when (typep node 'cons-extra-children-mixin)
-               (mapc function (middle node)))
-             (when dotted?
-               (let ((rest (cst:rest node)))
-                 (when (typep rest 'wad)
-                   (funcall function rest)))))
-           (visit-atom (node)
-             (typecase node
-               (wad ; dotted list TODO explain
-                (funcall function node))
-               (atom-with-children
-                (map-children function node)))))
-      (loop for previous = nil then node
+    (labels ((visit-wad-child (child expected-parent)
+               (when (let ((parent (parent child)))
+                       (or (null parent) (eq parent expected-parent)))
+                 (funcall function child)))
+             (visit-maybe-wad-child (child parent)
+               ;; It is possible that CHILD is a CST child (that is
+               ;; `cst:first' or `cst:rest') or PARENT but not a WAD
+               ;; child. This can happen due to `cst:reconstruct' in
+               ;; cases like the invalid expression ,(a b) since the
+               ;; whole expression is represented as a `cons-wad' with
+               ;; one `atom-wad' child for symbol a and a `cons-cst'
+               ;; child for (b). However, on the WAD level, the top
+               ;; `cons-wad' contains an intermediate `cons-wad' which
+               ;; represents (a b).
+               (when (typep child 'wad) ; TODO make `wad-p' function?
+                 (visit-wad-child child parent)))
+             (visit-cons (node wad-parent dotted? extra-children?)
+               (when extra-children?
+                 (mapc (lambda (wad-child) ; TODO ensure no consing
+                         (visit-wad-child wad-child wad-parent))
+                       (before-first node)))
+               (visit-maybe-wad-child (cst:first node) wad-parent)
+               (when extra-children?
+                 (mapc (lambda (wad-child)
+                         (visit-wad-child wad-child wad-parent))
+                       (middle node)))
+               (when dotted?
+                 (visit-maybe-wad-child (cst:rest node) wad-parent)))
+             (visit-atom (node)
+               (typecase node
+                 (wad ; dotted list TODO explain
+                  (funcall function node))
+                 (atom-with-children
+                  (map-children function node)))))
+      (declare (inline visit-wad-child visit-maybe-wad-child))
+      (loop with dangling = '()
+            for previous = nil then node
             for node = wad then (cst:rest node)
-            do (when (and previous
-                          (typep previous 'cons-extra-children-mixin))
-                 (mapc function (after-rest previous)))
             if (cst:consp node)
-              do (let ((dotted?    (not (or (cst:consp (cst:rest node))
-                                            (cst:null (cst:rest node)))))
-                       (wad-child? (and (not (eq node wad)) (typep node 'wad))))
+              do (let* ((rest       (cst:rest node))
+                        (dotted?    (not (or (cst:consp rest) (cst:null rest))))
+                        (wad-child? (and (not (eq node wad)) (typep node 'wad))))
                    (if wad-child?
-                       (funcall function node)
-                       (visit-cons node dotted?))
-                   (when dotted?
-                     #+maybe (when (not wad-child?)
-                       (when (typep node 'cons-extra-children-mixin)
-                         (mapc function (after-rest node))))
+                       (funcall function node) ; TODO extra-children? not needed here
+                       (let ((extra-children? (typep node 'cons-extra-children-mixin)))
+                         (visit-cons node wad dotted? extra-children?)
+                         (when extra-children?
+                           (alexandria:when-let ((after-rest (after-rest node)))
+                             (setf dangling (append dangling after-rest))))))
+                    ; TODO quadratic
+                   (when (or dotted? wad-child?)
                      (loop-finish)))
-            else ; if (not (cst:null node))
+            else ; atom-cst
               do (visit-atom node)
-                 (when (typep node 'cons-extra-children-mixin)
-                   (mapc function (after-rest node)))
-                 (loop-finish))
-      (when (typep wad 'cons-extra-children-mixin)
-        (mapc function (after-rest wad))))))
+                 (loop-finish)
+            finally (mapc (lambda (wad-child)
+                            (visit-wad-child wad-child wad))
+                          dangling)))))
 
 ;;; Definition and reference wads
 
@@ -706,9 +650,12 @@
   (:method ((wad wad) offset)
     (flet ((adjust (wad)
              (assert (relative-p wad))
-             (incf (start-line wad) offset)
-             (setf (relative-p wad) nil)))
+             (let ((new-start-line (+ (start-line wad) offset)))
+               (setf (start-line                 wad) new-start-line
+                     (absolute-start-line-number wad) new-start-line
+                     (relative-p                 wad) nil))))
       (adjust wad)
+      (setf (parent wad) nil)
       (mapc #'adjust (errors wad)))))
 
 (defgeneric absolute-to-relative (wad offset)
@@ -759,12 +706,12 @@
              (loop with base = offset
                    for wad in relative-wads
                    for absolute-start-line-number = (+ base (start-line wad))
-                   do (assert (relative-p wad))
                    do (setf (absolute-start-line-number wad)
                             absolute-start-line-number)
                       (process-wad wad base absolute-start-line-number)
                       (setf base absolute-start-line-number)))
            (process-wad (wad parent-start-line-number wad-start-line-number)
+             (assert (every #'relative-p (children wad)))
              (process-children (children wad) wad-start-line-number)
              (loop for error-wad in (errors wad)
                    for absolute-start-line-number = (if (relative-p error-wad) ; TODO can we make errors always relative?

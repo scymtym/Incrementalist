@@ -57,6 +57,7 @@
                      (suffix-width suffix-width))
         cache
       (assert (not (null suffix)))
+      (assert (not (relative-p (first suffix))))
       (pop suffix-width)
       (let ((result (pop suffix)))
         (unless (null suffix)
@@ -164,14 +165,12 @@
   (pop (worklist cache)))
 
 (defun push-to-worklist (cache wad)
-  (assert (not (relative-p wad)))
   (push wad (worklist cache)))
 
 (defun pop-from-residue (cache)
   (pop (residue cache)))
 
 (defun push-to-residue (cache wad)
-  (assert (not (relative-p wad)))
   (push wad (residue cache)))
 
 (defun finish-scavenge (cache)
@@ -226,11 +225,23 @@
 
 (defun adjust-wad (wad amount)
   (flet ((adjust (wad)
-           (incf (start-line wad) amount)))
+           (let ((new-start-line (+ (start-line wad) amount)))
+             (setf (start-line wad) new-start-line)
+             (when (not (relative-p wad))
+               (setf (absolute-start-line-number wad) new-start-line)))))
     (adjust wad)
+
+    (labels ((invalidate-children (wad)
+               (when (relative-p wad)
+                 (setf (slot-value wad '%absolute-start-line-number) :invalid))
+               (map-children #'invalidate-children wad)))
+      (invalidate-children wad))
+
     (let ((errors (errors wad)))
       (unless (null errors)
-        (mapc #'adjust errors)))))
+        (mapc #'adjust errors)))
+
+    wad))
 
 ;;; If the worklist is empty then move a wad from the suffix to the
 ;;; worklist (in that case, it is known that the suffix is not empty).
@@ -375,8 +386,9 @@
                    (not (relative-p top-level-wad))
                    ;; But it can also be the first wad on the suffix,
                    ;; because then it is absolute and not on the prefix.
-                   (not (eq (first (suffix cache)) top-level-wad)))
-        (break)))))
+                   ; TODO (not (eq (first (suffix cache)) top-level-wad))
+                   )
+        (break "top-level ~A wad ~A" top-level-wad wad)))))
 
 (defun map-empty-area
     (cache first-line start-column last-line end-column space-function)

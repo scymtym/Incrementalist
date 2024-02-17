@@ -104,17 +104,20 @@
     (let* ((line-number    (current-line-number stream))
            (max-line-width (compute-max-line-width
                             stream start-line line-number '())))
-      (apply #'make-wad class :start-line     start-line
-                              :height         (- end-line start-line)
-                              :start-column   start-column
-                              :end-column     end-column
-                              :relative-p     nil
-                              :max-line-width max-line-width
-                              :children       children
+      (let ((result (apply #'make-wad class :start-line     start-line
+                                            :height         (- end-line start-line)
+                                            :start-column   start-column
+                                            :end-column     end-column
+                                            :relative-p     nil
+                                            :max-line-width max-line-width
+                                            :children       children
 
-                              :absolute-start-line-number start-line
+                                            :absolute-start-line-number start-line
 
-                              extra-initargs))))
+                                            extra-initargs)))
+        (when children
+          (make-relative children (start-line result)))
+        result))))
 
 (defun make-word-wads (stream source
                        &key (start-column-offset 0)
@@ -233,20 +236,57 @@
                     :max-line-width max-line-width
                     :absolute-start-line-number start-line))))
 
-(defun adjust-result (cst new-class stream source extra-children)
+(defun adjust-result (cst new-class stream source extra-children wrap-around)
   (let ((result (if (null source)
                     cst
                     (adjust-result-class cst new-class stream source))))
     (when extra-children
-      (add-extra-children result extra-children)
-      ;; There may be "indirect" children of the form
-      ;; <RESULT is a CONS-WAD> -> rest ... rest -> CONS-WITH-CHILDREN -> children -> <A-WAD-CHILD>
-      ;; So refresh the family relations here.
-      (set-family-relations-of-children result))
+      (mapc (lambda (child)
+              (check-absolute-wad-with-relative-descendants child))
+            extra-children)
+
+      (labels ((check-wad (result)
+                 (assert (not (relative-p result)))
+                 (assert (eq (absolute-start-line-number result) (start-line result)))
+                 (let ((children (children result)))
+                   (cond ((null children))
+                         ((some #'relative-p children)
+                          (check-absolute-line-numbers result)) ; asserts that children are relative
+                         (t
+                          (mapc #'check-wad children))))))
+        (check-wad result))
+
+      (mapc (lambda (child)
+              (check-absolute-wad-with-relative-descendants child))
+            extra-children)
+
+      (add-extra-children result extra-children wrap-around))
+
+    ;; There may be "indirect" children of the form
+    ;; <RESULT is a CONS-WAD> -> rest ... rest -> CONS-WITH-CHILDREN -> children -> <A-WAD-CHILD>
+    ;; So refresh the family relations here.
+    (set-family-relations-of-children result)
+
+    (assert (not (relative-p result)))
+    (map-children (lambda (child)
+                    (check-absolute-wad-with-relative-descendants child))
+                  result)
+    (map-children (lambda (child)
+                    (assert (not (eq child (first (suffix (cache child)))))))
+                  result)
+    (make-relative (children result) (start-line result))
+    ;; TODO do everything in one pass: family relations and making children relative
+
     result))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client client) (result t) (children t) (source t))
+  ;; In case we call `cst:reconstruct', we may "consume" a child wad
+  ;; that is still on the residue or suffix without performing the
+  ;; corresponding recursive `read-maybe-nothing' call. As a
+  ;; workaround, consume any such wads here.
+  (cached-wad (stream* client))
+
   (multiple-value-bind (cst-children extra-children)
       (loop for child in children
             if (typep child 'cst:cst)
@@ -254,25 +294,64 @@
             else
               collect child into extra-children
             finally (return (values cst-children extra-children)))
+    (mapc (lambda (child)
+            (when (typep child 'wad)
+              (check-absolute-wad-with-relative-descendants child)))
+          cst-children)
+    (mapc (lambda (child)
+            (check-absolute-wad-with-relative-descendants child))
+          extra-children)
     (let* ((cst       (call-next-method client result cst-children source))
-           (new-class (etypecase cst
-                        (cst:atom-cst 'atom-wad)
-                        (cst:cons-cst 'cons-wad)))
-           (orphans   (loop :for child :in cst-children
+           (new-class (if (cst:consp cst)
+                          'cons-wad
+                          (progn
+                            (check-type cst cst:atom-cst) ; TODO remove later
+                            'atom-wad)))
+           (direct-cst-children (loop :for child :in cst-children
+                                      :unless (parent child)
+                                        :collect child))
+           (orphans   (loop :for child :in direct-cst-children
                             :unless (block nil
-                                      (map-children (lambda (child*)
-                                                      (when (eq child* child)
-                                                        (return t)))
-                                                    cst)
+                                      (labels ((rec (cst)
+                                                 (when (eq cst child)
+                                                   (return t))
+                                                 (map-children #'rec cst)))
+                                        (rec cst))
                                       nil) ; TODO do not call children repeatedly
-                              :collect child)))
-      (format *trace-output* "Result         ~A~%CST children   ~:A~%Extra children ~:A~%WAD children   ~:A~%Orphans        ~:A~%"
-              cst cst-children extra-children (when (children cst)) orphans)
+                            :collect child)))
+      #+no (format *trace-output* "Result         ~A~@
+                              CST children   ~:A~@
+                              Direct CST ch. ~:A~@
+                              Orphans        ~:A~@
+                              Extra children ~:A~@
+                              WAD children   ~:A~@
+                              "
+              cst cst-children direct-cst-children orphans extra-children '())
+      #+no (when (cst:consp cst)
+        (format *trace-output* "First          ~A~%Rest           ~:A~%"
+                (cst:first cst) (cst:rest cst)))
+      (mapc (lambda (child)
+              (check-absolute-wad-with-relative-descendants child))
+            extra-children)
+      (mapc (lambda (child)
+              (check-absolute-wad-with-relative-descendants child))
+            orphans)
+
       (assert (not (typep cst 'wad)))
-      (adjust-result cst new-class (stream* client) source
-                     (sort (append extra-children orphans) #'< ; TODO HACK
-                           :key (lambda (child)
-                                  (position child children)))))))
+      (let ((wrap-around (and cst-children
+                              (cst:consp cst)
+                              (or (not (typep (cst:first cst) 'wad))
+                                  (parent (cst:first cst)))
+                              (or (not (typep (cst:rest cst) 'wad))
+                                  (parent (cst:rest cst))))))
+        (when wrap-around
+          (assert direct-cst-children))
+        (let ((result (adjust-result cst new-class (stream* client) source
+                              (sort (append extra-children orphans) #'< ; TODO HACK
+                                    :key (lambda (child)
+                                           (position child children)))
+                              wrap-around)))
+          result)))))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client   client)
@@ -280,7 +359,7 @@
      (children t)
      (source   t))
   (let ((cst (call-next-method)))
-    (adjust-result cst 'labeled-object-definition-wad (stream* client) source '() )))
+    (adjust-result cst 'labeled-object-definition-wad (stream* client) source '() nil)))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client   client)
@@ -288,7 +367,7 @@
      (children t)
      (source   t))
   (let ((cst (call-next-method))) ; TODO handle children
-    (adjust-result cst 'labeled-object-reference-wad (stream* client) source '())))
+    (adjust-result cst 'labeled-object-reference-wad (stream* client) source '() nil)))
 
 ;;; S-expression generation
 
@@ -312,20 +391,3 @@
 
   (defmethod eclector.reader:wrap-in-function ((client client) (name t))
     (make-form "FUNCTION" "COMMON-LISP" name)))
-
-;;; Reconstruct
-
-(defmethod concrete-syntax-tree:reconstruct ((client     client)
-                                             (expression t)
-                                             (cst        t)
-                                             &key default-source)
-  (declare (ignore default-source))
-  (let* ((result (call-next-method))
-         (source (cst:source result)))
-    (if (null source)
-        result
-        (etypecase result
-          (cst:atom-cst
-           (adjust-result-class result 'atom-wad (stream* client) source))
-          (cst:cons-cst
-           (adjust-result-class result 'cons-wad (stream* client) source))))))

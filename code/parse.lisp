@@ -162,15 +162,17 @@
               ;; (add-extra-children result (reverse *errors*))
               #+no (add-children result (reverse *errors*)))
             (when (eq kind :object)
-             (alexandria:when-let ((errors *errors*))
-               ;; FIXME should not really be needed but the `absolute-start-line-number' `:before' method checks for this
-               (mapc (lambda (error)
-                       (assert (not (relative-p error)))
-                       (when (relative-p result)
-                         (absolute-to-relative error (absolute-start-line-number result)))
-                       (setf (parent error) result))
-                     errors)
-               (setf (errors result) errors)))
+              (alexandria:when-let ((errors *errors*))
+                ;; FIXME should not really be needed but the `absolute-start-line-number' `:before' method checks for this
+                (mapc (lambda (error)
+                        (assert (not (relative-p error)))
+                        (when (relative-p result)
+                          (absolute-to-relative error (absolute-start-line-number result)))
+                        (setf (parent error) result))
+                      errors)
+                (setf (errors result) errors))
+
+              (check-absolute-wad-with-relative-descendants result))
             (values object kind result)))
         ;; There is a cached wad for the current input position. Turn
         ;; the wad into appropriate return values, inject it into
@@ -180,19 +182,20 @@
               (skipped-wad (values nil              :skip   cached t))
               (error-wad   (values nil              :skip   cached t))
               (cst-wad     (values (cst:raw cached) :object cached t)))
-          (assert (not (relative-p cached)))
+          (check-absolute-wad-with-relative-descendants cached)
           (push cached (first eclector.parse-result::*stack*)) ; HACK
           (advance-stream-to-beyond-wad stream cached)))))
 
 (defun parse-and-cache (analyzer client)
   ;; Use ECLECTOR.READER:READ-MAYBE-NOTHING to read either a single
   ;; skipped input or an object. Both are pushed into the prefix of
-  ;; the FOLIO-STREAM. For any error during parsing,
-  ;; WITH-ERROR-RECORDING creates an ERROR-WAD records it in *ERRORS*,
-  ;; then asks Eclector to perform the appropriate recovery. The
-  ;; READ-MAYBE-NOTHING method takes care of integrating the collected
-  ;; ERROR-WADs into the wad tree.
-  (let ((*errors* '())) ; TODO this binding should be unused
+  ;; the cache that is associated with ANALYZER.
+  ;;
+  ;; For any errors during parsing, WITH-ERROR-RECORDING creates an
+  ;; ERROR-WAD records it in *ERRORS*, then asks Eclector to perform
+  ;; the appropriate recovery. The READ-MAYBE-NOTHING method takes
+  ;; care of integrating the collected ERROR-WADs into the wad tree.
+  (let ((*errors* '()))           ; TODO this binding should be unused
     (multiple-value-bind (object kind wad)
         (with-error-recording ()
           (eclector.reader:read-maybe-nothing client analyzer nil nil))
@@ -216,6 +219,7 @@
 
            (assert (typep wad 'wad))
            (assert (not (relative-p wad)))
+           (check-absolute-wad-with-relative-descendants wad)
 
            (labels ((rec (wad)
                       ;; FIXED I think add-children messes things up
