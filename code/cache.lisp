@@ -43,6 +43,8 @@
    ;; of the suffix.
    (%suffix-width :initform '() :accessor suffix-width)))
 
+;;; TODO print-object and describe-object
+
 ;;; Given a cache and an interval of lines, return the maxium length
 ;;; of any lines in the interval.
 (defun max-line-length (cache first-line-number last-line-number)
