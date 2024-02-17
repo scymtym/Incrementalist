@@ -17,23 +17,6 @@
 
 ;;; `children-mixin' and `cons-extra-children-mixin'
 
-(defmethod map-children :around ((function t) (node t))
-  (let ((seen     (make-hash-table :test #'eq))
-        (previous nil))
-    (flet ((do-it (child)
-             ;; Duplicates
-             (assert (not (gethash child seen)))
-             (setf (gethash child seen) t)
-             ;; Buffer location order
-             (when previous
-               ;; TODO would be nice to assert this
-               ;; (assert (wad-ends-after-wad-p previous child))
-               )
-             (setf previous child)
-             ;; Original function
-             (funcall function child)))
-      (call-next-method #'do-it node))))
-
 (defmethod children ((node t))
   ;; TODO maybe cache this?
   (let ((result '()))
