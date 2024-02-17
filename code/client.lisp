@@ -293,8 +293,9 @@
 ;;; S-expression generation
 
 (flet ((make-form (symbol-name package-name &rest rest)
-         (let ((head (make-instance 'existing-symbol-token :name         symbol-name
-                                                           :package-name package-name)))
+         (let ((head (make-instance 'existing-symbol-token
+                                    :name         symbol-name
+                                    :package-name package-name)))
            (list* head rest))))
 
   (defmethod eclector.reader:wrap-in-quote ((client client) (material t))

@@ -147,9 +147,8 @@
             ;; error-wad) since the ADVANCE-STREAM-TO-BEYOND-WAD would
             ;; not advance in that case and the read loop would not
             ;; make any progress.
-            (when (and (= (start-line cached) (end-line cached))
-                       (= (start-column cached) (end-column cached)))
-              t))
+            (and (= (start-line cached) (end-line cached))
+                 (= (start-column cached) (end-column cached))))
         ;; Nothing has been cached, so call
         ;; READ-MAYBE-NOTHING. Collect errors in *ERRORS* and
         ;; integrate them into the wad tree.
