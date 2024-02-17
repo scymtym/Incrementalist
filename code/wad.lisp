@@ -220,10 +220,10 @@
   (declare (ignorable children))
   (set-family-relations-of-children wad))
 
-(defmethod shared-initialize :after ((wad wad) (slot-names t) &key)
+(defmethod shared-initialize :after ((wad wad) (slot-names t) &key) ; TODO instance
   (set-family-relations-of-children wad))
 
-(defmethod initialize-instance :after ((object wad) &key)
+(defmethod initialize-instance :after ((object wad) &key) ; TODO instance
   (let* ((start-column (start-column object))
          (end-column   (end-column object))
          (min-column   (reduce #'min (children object)
