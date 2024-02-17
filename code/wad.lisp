@@ -359,6 +359,9 @@
 
 ;;; Atom
 
+(defmethod map-children ((function t) (wad cst:atom-cst))
+  '())
+
 (defclass atom-with-children (children-mixin
                               cst:atom-cst)
   ())
@@ -372,9 +375,6 @@
   (print-unreadable-object (object stream :type t)
     (print-wad-position object stream)
     (format stream " raw: ~S" (cst:raw object))))
-
-(defmethod map-children ((function t) (wad cst:atom-cst))
-  '())
 
 ;;; Cons
 
