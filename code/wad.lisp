@@ -48,7 +48,7 @@
               :initform '())))
 
 (defmethod map-children ((function t) (object children-mixin))
-  (mapcar function (extra-children object)))
+  (mapc function (extra-children object)))
 
 ;;; Instances of `cons-with-children' and `cons-wad' have two types of
 ;;; children: the `cst:first' and `cst:rest' relations point to one
