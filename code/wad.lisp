@@ -126,7 +126,7 @@
    ;; contents is valid only when the wad is on the prefix, and when
    ;; the wad is the top-level wad which is the first on the suffix.
    ;; With a wad in a different place, this slot may contain some
-   ;; obsolete value.  We define a :BEFORE method on the slot reader
+   ;; obsolete value.  We define a :BEFORE method on the slot reader TODO now wrong
    ;; so that the wad of the argument will always be on the prefix
    ;; when the absolute line number is asked for.
    (%absolute-start-line-number :initarg  :absolute-start-line-number
@@ -767,7 +767,7 @@
            (process-wad (wad parent-start-line-number wad-start-line-number)
              (process-children (children wad) wad-start-line-number)
              (loop for error-wad in (errors wad)
-                   for absolute-start-line-number = (if (relative-p error-wad)
+                   for absolute-start-line-number = (if (relative-p error-wad) ; TODO can we make errors always relative?
                                                         (+ parent-start-line-number (start-line error-wad))
                                                         (start-line error-wad))
                    do (setf (absolute-start-line-number error-wad)

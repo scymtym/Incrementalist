@@ -36,7 +36,7 @@
 (defclass existing-symbol-token (symbol-token)
   ())
 
-(defclass value-token (other-token)
+(defclass value-token (other-token) ; TODO remove since cst:raw contains this information
   ((%value :initarg :value
            :reader value)))
 
