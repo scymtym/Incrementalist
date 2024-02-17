@@ -57,7 +57,8 @@
                               (:file "code-reading-utilities")
                               ;; Tests
                               (:file "test")
-                              (:file "read-code"))))
+                              (:file "read-code")
+                              (:file "regressions"))))
 
   :perform     (test-op (operation component)
                  (uiop:symbol-call '#:incrementalist.test '#:run-tests)))
