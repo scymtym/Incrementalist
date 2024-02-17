@@ -785,4 +785,5 @@
                                                         (start-line error-wad))
                    do (setf (absolute-start-line-number error-wad)
                             absolute-start-line-number))))
-    (process-wad top-level-wad nil (start-line top-level-wad))))
+    (process-wad top-level-wad nil (start-line top-level-wad)))
+  top-level-wad)
