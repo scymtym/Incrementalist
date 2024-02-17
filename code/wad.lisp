@@ -176,6 +176,10 @@
                                 :type     (integer 0) ; TODO despite what the comment says, 0 is used in some cases
                                 :accessor end-column)))
 
+(declaim (inline absolute-p))
+(defun absolute-p (wad)
+  (not (relative-p wad)))
+
 (defclass wad (family-relations-mixin
                basic-wad)
   (;; This slot contains the column number of the leftmost known
