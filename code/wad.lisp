@@ -351,8 +351,7 @@
 (defmethod map-children ((function t) (wad cst:atom-cst))
   '())
 
-(defclass atom-with-children (children-mixin
-                              cst:atom-cst)
+(defclass atom-with-children (children-mixin cst:atom-cst)
   ())
 
 (defclass atom-wad (children-mixin
@@ -367,13 +366,16 @@
 
 ;;; Cons
 
-(defclass cons-with-children (cons-extra-children-mixin
-                              cst:cons-cst)
+(defclass cons-with-extra-children (cons-extra-children-mixin
+                                    cst:cons-cst)
   ())
 
-(defclass cons-wad (cons-extra-children-mixin
-                    cst-wad
-                    cst:cons-cst) ; TODO we inherit the `%source' slot which we do not use
+(defclass cons-wad (cst-wad cst:cons-cst) ; TODO we inherit the `%source' slot which we do not use
+  ())
+
+(defclass cons-wad-with-extra-children (cons-extra-children-mixin
+                                        cst-wad
+                                        cst:cons-cst) ; TODO we inherit the `%source' slot which we do not use
   ())
 
 ;;; TODO Add a class `cons-wad-with-extra-children' so that we can
@@ -501,13 +503,20 @@
              (values '() '() extra-children '() '())
              (distribute-extra-cons-children result extra-children))
        (when (or before-first before-rest remaining)
-         (if (typep result 'cons-extra-children-mixin)
-             (reinitialize-instance result :before-first before-first
-                                           :middle       before-rest
-                                           :after-rest   remaining)
-             (change-class result 'cons-with-children :before-first before-first
-                                                      :middle       before-rest
-                                                      :after-rest   remaining)))
+         (cond ((typep result 'cons-extra-children-mixin)
+                (reinitialize-instance result :before-first before-first
+                                              :middle       before-rest
+                                              :after-rest   remaining))
+               ((typep result 'wad)
+                (change-class result 'cons-wad-with-extra-children
+                              :before-first before-first
+                              :middle       before-rest
+                              :after-rest   remaining))
+               (t
+                (change-class result 'cons-with-extra-children
+                              :before-first before-first
+                              :middle       before-rest
+                              :after-rest   remaining))))
        (when in-first
          (break "cannot add children ~S to~@
                  ~A~@
