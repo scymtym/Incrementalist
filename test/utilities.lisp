@@ -78,7 +78,7 @@
 
 (defun is-wad-data (expected-type expected-location wad result-info
                     &key input)
-  (is (typep wad expected-type)
+  (is (alexandria:type= (class-of wad) expected-type)
       "~@<For~@[ input~@:_~@:_~
        ~S~
        ~@:_~@:_ and~] result~@:_~@:_~
@@ -101,7 +101,8 @@
 (defun is-error (expected-error wad result-info &key input)
   (let ((result-info (cons (car result-info) wad)))
     (destructuring-bind (expected-location expected-condition-type) expected-error
-      (is-wad-data 'inc::error-wad expected-location wad result-info)
+      (is-wad-data 'inc::error-wad expected-location wad result-info
+                   :input input)
       (let ((condition (inc::condition* wad)))
         (is (typep condition expected-condition-type)
             "~@<For~@[ input~@:_~@:_~
@@ -128,7 +129,8 @@
              expected
            (let ((result-info (cons root-result result)))
              ;; Assertions for type and location
-             (is-wad-data expected-type expected-location result result-info)
+             (is-wad-data expected-type expected-location result result-info
+                          :input input)
              ;; Assertions for errors
              (is-sequence (lambda (expected-error actual-error)
                             (is-error expected-error actual-error result-info))
