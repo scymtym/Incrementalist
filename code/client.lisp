@@ -294,13 +294,6 @@
             else
               collect child into extra-children
             finally (return (values cst-children extra-children)))
-    (mapc (lambda (child)
-            (when (typep child 'wad)
-              (check-absolute-wad-with-relative-descendants child)))
-          cst-children)
-    (mapc (lambda (child)
-            (check-absolute-wad-with-relative-descendants child))
-          extra-children)
     (let* ((cst       (call-next-method client result cst-children source))
            (new-class (if (cst:consp cst)
                           'cons-wad
