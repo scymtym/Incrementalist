@@ -43,6 +43,8 @@
   (print-unreadable-object (object stream :type t :identity t)
     (format stream "~A,~A" (line-number object) (item-number object))))
 
+;;; Gray stream protocol
+
 (defmethod gs:stream-peek-char ((stream buffer-stream))
   (let* ((item-number   (item-number stream))
          (end-of-line-p (= item-number (the alexandria:array-index
