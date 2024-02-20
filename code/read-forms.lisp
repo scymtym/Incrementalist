@@ -6,7 +6,7 @@
         cache
       ;; Position stream after last prefix wad (remember the cache
       ;; prefix is stored in reverse order) if any.
-      (update-line-count-cache analyzer (lines analyzer)) ; TODO better protocol
+      (update-lines-cache analyzer (lines analyzer))
       (setf (values (line-number analyzer) (item-number analyzer))
             (if (null prefix)
                 (values 0 0)

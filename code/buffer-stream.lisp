@@ -16,9 +16,10 @@
   (:default-initargs
    :lines (alexandria:required-argument :lines)))
 
-(declaim (inline update-line-count-cache update-line-cache))
-(defun update-line-count-cache (stream lines)
-  (setf (%line-count stream) (flx:nb-elements lines)))
+(declaim (inline update-lines-cache update-line-cache))
+(defun update-lines-cache (stream lines)
+  (setf (line-number stream) nil
+        (%line-count stream) (flx:nb-elements lines)))
 
 (defun update-line-cache (stream lines old-line-number new-line-number)
   (unless (eql new-line-number old-line-number)
@@ -30,7 +31,7 @@
                                      (slot-names t)
                                      &key (lines nil lines-supplied-p))
   (when lines-supplied-p
-    (update-line-count-cache instance lines)))
+    (update-lines-cache instance lines)))
 
 (defmethod (setf line-number) :around ((new-value integer)
                                        (object    buffer-stream))
