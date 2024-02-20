@@ -156,8 +156,6 @@
                                           (cons line column)))
                        (misspelledp (and checkp
                                          (null (spell:english-lookup word)))))
-                   (when (> line end-line) (break))
-                   (when (and (= line end-line) (> column end-column*)) (break))
                    (push (make-result-wad* 'word-wad stream source
                                            :misspelled misspelledp)
                          words)))
@@ -166,7 +164,7 @@
         (loop for line     from start-line to (if (zerop end-column*)
                                                   (1- end-line)
                                                   end-line)
-              for contents =    (line-contents cache line)
+              for contents =    (the (and simple-string) (line-contents cache line))
               do (loop with end-column = (if (= line end-line)
                                              (+ end-column*
                                                 (if end-column-offset-p
@@ -349,6 +347,7 @@
       #+no (when (cst:consp cst)
         (format *trace-output* "First          ~A~%Rest           ~:A~%"
                 (cst:first cst) (cst:rest cst)))
+      (assert (not (typep cst 'wad)))
       (mapc (lambda (child)
               (check-absolute-wad-with-relative-descendants child))
             extra-children)
