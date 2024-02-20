@@ -237,29 +237,9 @@
                     :absolute-start-line-number start-line))))
 
 (defun adjust-result (cst new-class stream source extra-children wrap-around)
-  (let ((result (if (null source)
-                    cst
-                    (adjust-result-class cst new-class stream source))))
+  (assert (not (null source)))
+  (let ((result (adjust-result-class cst new-class stream source)))
     (when extra-children
-      (mapc (lambda (child)
-              (check-absolute-wad-with-relative-descendants child))
-            extra-children)
-
-      (labels ((check-wad (result)
-                 (assert (not (relative-p result)))
-                 (assert (eq (absolute-start-line-number result) (start-line result)))
-                 (let ((children (children result)))
-                   (cond ((null children))
-                         ((some #'relative-p children)
-                          (check-absolute-line-numbers result)) ; asserts that children are relative
-                         (t
-                          (mapc #'check-wad children))))))
-        (check-wad result))
-
-      (mapc (lambda (child)
-              (check-absolute-wad-with-relative-descendants child))
-            extra-children)
-
       (add-extra-children result extra-children wrap-around))
 
     ;; There may be "indirect" children of the form
@@ -267,16 +247,12 @@
     ;; So refresh the family relations here.
     (set-family-relations-of-children result)
 
-    (assert (not (relative-p result)))
     (map-children (lambda (child)
+                    (assert (not (eq child (first (suffix (cache child))))))
                     (check-absolute-wad-with-relative-descendants child))
-                  result)
-    (map-children (lambda (child)
-                    (assert (not (eq child (first (suffix (cache child)))))))
                   result)
     (make-relative (children result) (start-line result))
     ;; TODO do everything in one pass: family relations and making children relative
-
     result))
 
 (defmethod eclector.parse-result:make-expression-result

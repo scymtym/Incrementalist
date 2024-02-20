@@ -55,6 +55,34 @@
 
 ;;; Reader
 
+(defun after-adjust-result-class (result)
+  (labels ((check-wad (result)
+             (assert (not (relative-p result)))
+             (assert (eq (absolute-start-line-number result) (start-line result)))
+             (let ((children (children result)))
+               (cond ((null children))
+                     ((some #'relative-p children)
+                      (check-absolute-line-numbers result)) ; asserts that children are relative
+                     (t
+                      (mapc #'check-wad children))))))
+    (when (typep result 'wad)
+      (check-wad result))))
+#+sbcl (trace adjust-result-class :report      nil
+                                  :print-after (progn
+                                                 (after-adjust-result-class
+                                                  (sb-debug:arg 0))
+                                                 (values)))
+
+(defun before-adjust-result (extra-children)
+  (when extra-children
+    (mapc (lambda (child)
+            (check-absolute-wad-with-relative-descendants child))
+          extra-children)))
+#+sbcl (trace adjust-result :report nil
+                            :print  (progn
+                                      (before-adjust-result (sb-debug:arg 4))
+                                      (values)))
+
 (defmethod eclector.parse-result:make-expression-result
     :around ((client client) (result t) (children t) (source t))
   ;; When WADs appear as children, they have to be absolute WADs while
@@ -103,7 +131,6 @@
                                         (values)))
 
 (defun after-pop-from-worklist (result)
-  (declare (ignore cache))
   (check-absolute-wad-with-relative-descendants result))
 #+sbcl (trace pop-from-worklist :report      nil
                                 :print-after (progn
