@@ -356,21 +356,14 @@
               (check-absolute-wad-with-relative-descendants child))
             orphans)
 
-      (assert (not (typep cst 'wad)))
-      (let ((wrap-around (and cst-children
-                              (cst:consp cst)
-                              (or (not (typep (cst:first cst) 'wad))
-                                  (parent (cst:first cst)))
-                              (or (not (typep (cst:rest cst) 'wad))
-                                  (parent (cst:rest cst))))))
-        (when wrap-around
-          (assert direct-cst-children))
-        (let ((result (adjust-result cst new-class (stream* client) source
-                                     (sort (append extra-children orphans) #'< ; TODO HACK
-                                           :key (lambda (child)
-                                                  (position child children)))
-                                     wrap-around)))
-          result)))))
+      (when wrap-around-p
+        (assert direct-cst-children))
+      (let ((result (adjust-result cst new-class (stream* client) source
+                                   (sort (append extra-children orphans) #'< ; TODO HACK
+                                         :key (lambda (child)
+                                                (position child children)))
+                                   wrap-around-p)))
+        result))))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client   client)
