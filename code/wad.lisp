@@ -216,17 +216,19 @@
       (loop for (left right) on children
             repeat (1- length)
             do (setf (right-sibling left) right
-                     (left-sibling right) left)))))
+                     (left-sibling right) left))))
+  wad)
 
 (defmethod (setf children) :after (children (wad wad))
   (declare (ignorable children))
   (set-family-relations-of-children wad))
 
-(defmethod shared-initialize :after ((wad wad) (slot-names t) &key) ; TODO instance
+#+no-needed? (defmethod shared-initialize :after ((wad wad) (slot-names t) &key) ; TODO instance
   (set-family-relations-of-children wad))
 
 (defmethod initialize-instance :after ((object wad) &key) ; TODO instance
-  (let* ((start-column (start-column object))
+  ;; TODO replace this
+  #+no (let* ((start-column (start-column object))
          (end-column   (end-column object))
          (min-column   (reduce #'min (children object)
                                :initial-value (min start-column end-column)
