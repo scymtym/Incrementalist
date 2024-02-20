@@ -1,6 +1,7 @@
 (cl:in-package #:incrementalist)
 
 (defun read-forms (analyzer)
+  (update-line-count-cache analyzer (lines analyzer)) ; TODO better protocol
   (with-accessors ((cache cache)
                    (current-line-number current-line-number)
                    (current-item-number current-item-number))

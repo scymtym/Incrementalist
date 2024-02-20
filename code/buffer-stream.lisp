@@ -1,80 +1,91 @@
 (cl:in-package #:incrementalist)
 
-(defgeneric eof-p (buffer-stream))
+(defmethod current-line-number ((object buffer-stream))
+  (line-number object))
 
-(defgeneric next-position (lines line-number item-number))
+(defmethod (setf current-line-number) ((new-value t) (object buffer-stream))
+  (setf (line-number object) new-value))
 
-(defgeneric previous-position (lines line-number item-number))
+(defmethod current-item-number ((object buffer-stream))
+  (item-number object))
 
-(defgeneric forward (buffer-stream))
-
-(defgeneric backward (buffer-stream))
+(defmethod (setf current-item-number) ((new-value t) (object buffer-stream))
+  (setf (item-number object) new-value))
 
 (defclass buffer-stream (gs:fundamental-character-input-stream)
-  ((%lines :initarg :lines :reader lines)
-   (%current-line-number :initform 0 :accessor current-line-number)
-   (%current-item-number :initform 0 :accessor current-item-number)))
+  ((%lines         :initarg  :lines
+                   :reader   lines)
+   ;; Current position
+   (%file-position :reader   gs:stream-file-position
+                   :initform 0)
+   (%line-number   :accessor line-number)
+   (%item-number   :accessor item-number)
+   ;; Cached line information
+   (%line-count    :accessor %line-count)
+   (%line          :accessor %line)
+   (%item-count    :accessor %item-count))
+  (:default-initargs
+   :lines (alexandria:required-argument :lines)))
 
-(defmethod eof-p ((stream buffer-stream))
-  (let* ((lines (lines stream))
-         (last-line-number (1- (flx:nb-elements lines)))
-         (last-line (flx:element* lines last-line-number))
-         (last-line-length (length last-line)))
-    (and (= (current-line-number stream) last-line-number)
-         (= (current-item-number stream) last-line-length))))
+(declaim (inline update-line-count-cache update-line-cache))
+(defun update-line-count-cache (stream lines)
+  (setf (%line-count stream) (flx:nb-elements lines)))
 
-(defmethod next-position ((lines flx:flexichain) line-number item-number)
-  (if (= (length (flx:element* lines line-number)) item-number)
-      (values (1+ line-number) 0)
-      (values line-number (1+ item-number))))
+(defun update-line-cache (stream lines new-line-number)
+  (let ((line (flx:element* lines new-line-number)))
+    (setf (%line       stream) line
+          (%item-count stream) (length line))))
 
-(defmethod previous-position ((lines flx:flexichain) line-number item-number)
-  (if (zerop item-number)
-      (values (1- line-number)
-              (length (flx:element* lines (1- line-number))))
-      (values line-number (1- item-number))))
+(defmethod shared-initialize :after ((instance   buffer-stream)
+                                     (slot-names t)
+                                     &key (lines nil lines-supplied-p))
+  (when lines-supplied-p
+    (update-line-count-cache instance lines)
+    #+no (let ((line-number (line-number instance)))
+      (update-line-cache instance lines line-number))))
 
-(macrolet ((define (name position-method)
-             `(defmethod ,name ((stream buffer-stream))
-                (with-accessors ((lines lines)
-                                 (current-line-number current-line-number)
-                                 (current-item-number current-item-number))
-                    stream
-                  (setf (values current-line-number current-item-number)
-                        (,position-method lines current-line-number current-item-number))))))
-  (define forward  next-position)
-  (define backward previous-position))
+(defmethod (setf line-number) :after ((new-value integer)
+                                      (object    buffer-stream))
+  (update-line-cache object (lines object) new-value))
 
 (defmethod gs:stream-peek-char ((stream buffer-stream))
-  (if (eof-p stream)
-      :eof
-      (let* ((lines (lines stream))
-             (current-line-number (current-line-number stream))
-             (current-item-number (current-item-number stream))
-             (line (flx:element* lines current-line-number)))
-        (if (= (length line) current-item-number)
-            #\Newline
-            (aref line current-item-number)))))
+  (let* ((item-number   (item-number stream))
+         (end-of-line-p (= item-number (%item-count stream))))
+    (cond ((not end-of-line-p)
+           (let ((line (%line stream)))
+             (aref line item-number)))
+          ((= (line-number stream) (1- (%line-count stream)))
+           :eof)
+          (t
+           #\Newline))))
 
 (defmethod gs:stream-read-char ((stream buffer-stream))
-  (let ((result (gs:stream-peek-char stream)))
-    (prog1
-        result
-      (unless (eq result :eof)
-        (forward stream)))))
+  (let* (line-number
+         (item-number   (item-number stream))
+         (end-of-line-p (= item-number (%item-count stream))))
+    (cond ((not end-of-line-p)
+           (prog1
+               (let ((line (%line stream)))
+                 (aref line item-number))
+             (setf (item-number stream) (1+ item-number))))
+          ((= (setf line-number (line-number stream))
+              (1- (%line-count stream)))
+           :eof)
+          (t
+           (prog1
+               #\Newline
+             (setf (line-number stream) (1+ line-number) ; updates cache
+                   (item-number stream) 0))))))
 
 (defmethod gs:stream-unread-char ((stream buffer-stream) char)
   (declare (ignore char))
-  (backward stream))
-
-(defun compute-max-line-width (buffer-stream start-line end-line children)
-  (let ((lines (lines buffer-stream)))
-    (loop with rest = children
-          for line-number from start-line
-          while (<= line-number end-line)
-          if (and (not (null rest)) (= line-number (start-line (first rest))))
-            maximize (max-line-width (first rest))
-            and do (setf line-number (end-line (first rest)))
-                   (pop rest)
-          else
-            maximize (length (flx:element* lines line-number)))))
+  (let* (line-number
+         (item-number         (item-number stream))
+         (beginning-of-line-p (zerop item-number)))
+    (cond ((not beginning-of-line-p)
+           (setf (item-number stream) (1- item-number)))
+          ((zerop (setf line-number (line-number stream)))
+           (error "Attempt to unread a character at position 0"))
+          (t
+           (setf (line-number stream) (1- line-number)  ; updates cache
+                 (item-number stream) (length (%line stream)))))))
