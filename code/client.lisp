@@ -97,33 +97,47 @@
 
 ;;; Result construction
 
-(defun make-result-wad (class stream source children ; still used for WORD-WADs
-                        &rest extra-initargs &key &allow-other-keys)
-  (destructuring-bind ((start-line . start-column) . (end-line . end-column))
-      source
-    (let* ((line-number    (current-line-number stream))
-           (max-line-width (compute-max-line-width
-                            stream start-line line-number '())))
-      (let ((result (apply #'make-wad class :start-line     start-line
-                                            :height         (- end-line start-line)
-                                            :start-column   start-column
-                                            :end-column     end-column
-                                            :relative-p     nil
-                                            :max-line-width max-line-width
-                                            :children       children
+(defmacro destructure-source ((start-line-var start-column-var
+                               end-line-var   end-column-var)
+                              source &body body)
+  `(destructuring-bind ((,start-line-var . ,start-column-var)
+                        . (,end-line-var . ,end-column-var))
+       ,source
+     (declare (type alexandria:array-index
+                    ,start-line-var ,start-column-var
+                    ,end-line-var   ,end-column-var))
+     ,@body ))
 
-                                            :absolute-start-line-number start-line
+(defmacro make-result-wad* (class stream source &rest extra-initargs)
+  (alexandria:once-only (stream)
+    `(destructure-source (start-line start-column end-line end-column) ,source ; TODO gensyms
+       (let* ((line-number    (current-line-number ,stream))
+              (max-line-width (compute-max-line-width
+                               ,stream start-line line-number '())))
+         (make-instance ,class :cache                      *cache*
+                               :relative-p                 nil
+                               :absolute-start-line-number start-line
+                               :start-line                 start-line
+                               :height                     (- end-line start-line)
+                               :start-column               start-column
+                               :end-column                 end-column
+                               :max-line-width             max-line-width
+                               ,@extra-initargs)))))
 
-                                            extra-initargs)))
-        (when children
-          (make-relative children (start-line result)))
-        result))))
+(defmacro make-result-wad-with-children (class stream source children
+                                         &rest extra-initargs)
+  (alexandria:once-only (children)
+    `(let ((result (make-result-wad* ,class ,stream ,source
+                                     :children ,children
+                                     ,@extra-initargs)))
+       (when ,children
+         (make-relative ,children (start-line result)))
+       (set-family-relations-of-children result))))
 
 (defun make-word-wads (stream source
                        &key (start-column-offset 0)
                             (end-column-offset   0 end-column-offset-p))
-  (destructuring-bind ((start-line . start-column) . (end-line . end-column*))
-      source
+  (destructure-source (start-line start-column end-line end-column*) source
     (let* ((cache             (cache stream))
            (word              (make-array 0 :element-type 'character
                                             :adjustable   t
@@ -144,8 +158,8 @@
                                          (null (spell:english-lookup word)))))
                    (when (> line end-line) (break))
                    (when (and (= line end-line) (> column end-column*)) (break))
-                   (push (make-result-wad 'word-wad stream source '()
-                                          :misspelled misspelledp)
+                   (push (make-result-wad* 'word-wad stream source
+                                           :misspelled misspelledp)
                          words)))
                (setf (fill-pointer word) 0
                      word-start-column   column)))
@@ -178,46 +192,47 @@
 
 (defmethod eclector.parse-result:make-skipped-input-result
     ((client client) (stream t) (reason t) (source t))
-  (flet ((make-it (class &rest extra-initargs)
-           (apply #'make-result-wad class stream source '() extra-initargs)))
-    (etypecase reason
-      ((cons (eql :line-comment))
-       ;; Eclector returns the beginning of the following line as the
-       ;; end of the comment.  But we want it to be the end of the
-       ;; same line.  But I don't know how to do it correctly (yet).
-       (let* ((semicolon-count (cdr reason))
-              (words           (make-word-wads
-                                stream source
-                                :start-column-offset semicolon-count)))
-         (make-result-wad 'semicolon-comment-wad stream source words
-                          :semicolon-count semicolon-count)))
-      ((eql :block-comment)
-       (let ((words (make-word-wads stream source :start-column-offset 2
-                                                  :end-column-offset   -2)))
-         (make-result-wad 'block-comment-wad stream source words)))
-      ((eql :reader-macro)
-       (make-it 'reader-macro-wad))
-      ((eql *read-suppress*)
-       (make-it 'read-suppress-wad))
-      ((cons (eql :sharpsign-plus))
-       (make-it 'sharpsign-plus-wad  :expression (cdr reason)))
-      ((cons (eql :sharpsign-minus))
-       (make-it 'sharpsign-minus-wad :expression (cdr reason))))))
+  (etypecase reason
+    ((cons (eql :line-comment))
+     ;; Eclector returns the beginning of the following line as the
+     ;; end of the comment.  But we want it to be the end of the
+     ;; same line.  But I don't know how to do it correctly (yet).
+     (let* ((semicolon-count (cdr reason))
+            (words           (make-word-wads
+                              stream source
+                              :start-column-offset semicolon-count)))
+       (make-result-wad-with-children
+        'semicolon-comment-wad stream source words
+        :semicolon-count semicolon-count)))
+    ((eql :block-comment)
+     (let ((words (make-word-wads stream source :start-column-offset 2
+                                                :end-column-offset   -2)))
+       (make-result-wad-with-children 'block-comment-wad stream source words)))
+    ((eql :reader-macro)
+     (make-result-wad* 'reader-macro-wad stream source))
+    ((eql *read-suppress*)
+     (make-result-wad* 'read-suppress-wad stream source))
+    ((cons (eql :sharpsign-plus))
+     (make-result-wad* 'sharpsign-plus-wad stream source
+                       :expression (cdr reason)))
+    ((cons (eql :sharpsign-minus))
+     (make-result-wad* 'sharpsign-minus-wad stream source
+                       :expression (cdr reason)))))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client client) (result symbol-token) (children t) (source t))
   (if (and (null children) (not (string= (package-name result) "COMMON-LISP")))
       (let ((words (make-word-wads (stream* client) source)))
-        (make-result-wad 'atom-wad (stream* client) source words
-                         :raw result))
+        (make-result-wad-with-children
+         'atom-wad (stream* client) source words :raw result))
       (call-next-method)))
 
 (defmethod eclector.parse-result:make-expression-result
     ((client client) (result string) (children t) (source t))
   (if (null children)
       (let ((words (make-word-wads (stream* client) source)))
-        (make-result-wad 'atom-wad (stream* client) source words
-                         :raw result))
+        (make-result-wad-with-children
+         'atom-wad (stream* client) source words :raw result))
       (call-next-method)))
 
 (defun adjust-result-class (cst new-class stream source)
@@ -263,31 +278,63 @@
   ;; workaround, consume any such wads here.
   (cached-wad (stream* client))
 
-  (multiple-value-bind (cst-children extra-children)
+  (multiple-value-bind (cst-children direct-cst-children extra-children)
       (loop for child in children
             if (typep child 'cst:cst)
               collect child into cst-children
+              and when (null (parent child))
+                collect child into direct-cst-children
+              end
             else
               collect child into extra-children
-            finally (return (values cst-children extra-children)))
-    (let* ((cst       (call-next-method client result cst-children source))
-           (new-class (if (cst:consp cst)
-                          'cons-wad
-                          (progn
-                            (check-type cst cst:atom-cst) ; TODO remove later
-                            'atom-wad)))
-           (direct-cst-children (loop :for child :in cst-children
-                                      :unless (parent child)
-                                        :collect child))
-           (orphans   (loop :for child :in direct-cst-children
-                            :unless (block nil
-                                      (labels ((rec (cst)
-                                                 (when (eq cst child)
-                                                   (return t))
-                                                 (map-children #'rec cst)))
-                                        (rec cst))
-                                      nil) ; TODO do not call children repeatedly
-                            :collect child)))
+            finally (return (values cst-children
+                                    direct-cst-children
+                                    extra-children)))
+    (let* ((cst           (call-next-method client result cst-children source))
+           (consp         (cst:consp cst))
+           (first         (when consp (cst:first cst)))
+           (rest          (when consp (cst:rest cst)))
+           (wrap-around-p (and consp
+                               cst-children
+                               (or (not (typep first 'wad)) (parent first))
+                               (or (not (typep rest 'wad)) (parent rest))))
+           (new-class     (if consp
+                              'cons-wad
+                              (progn
+                                (check-type cst cst:atom-cst) ; TODO remove later
+                                'atom-wad)))
+           (orphans       '()))
+      ;; Optimistic assumption: no orphans
+      (block nil
+        (let ((remaining direct-cst-children))
+          (map-children (lambda (child)
+                          (when (not (eq child (pop remaining)))
+                            (setf orphans (copy-list direct-cst-children))
+                            (format *trace-output* "~D direct children, actual orphans~%" (length direct-cst-children))
+                            (return)))
+                        cst)
+          ; (format *trace-output* "~D direct children, no orphans~%" (length direct-cst-children))
+          ))
+      (when orphans
+                                        ; (format *trace-output* "Orphans 1: ~A~%" orphans)
+        #+no (format *trace-output* "Orphans ~D~%" (length orphans))
+        #+bno (when (> (length orphans) 100)
+                (format *trace-output* "  Result ~A~%" cst))
+        (loop :named nil
+              :with worklist = (copy-list (children cst))
+              :for i :from 0
+              :while worklist
+              :for child = (pop worklist)
+                                        ; :do (format *trace-output* "Child ~A~%Worklist ~A~%Orphans ~A~%" child worklist orphans)
+
+              :when (null (setf orphans (delete child orphans :test #'eq)))
+              :do ; (format *trace-output* "  Visited ~D, no actual orphans~%" i)
+                 (return)
+              :do (setf worklist (nconc worklist (copy-list (children child))))
+              :finally (format *trace-output* "  Visited (all) ~D, actual orphans ~:D~%"
+                               i (length orphans)))
+                                        ; (format *trace-output* "Orphans 2: ~A~%" orphans)
+        )
       #+no (format *trace-output* "Result         ~A~@
                               CST children   ~:A~@
                               Direct CST ch. ~:A~@
