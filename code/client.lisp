@@ -275,7 +275,10 @@
   ;; corresponding recursive `read-maybe-nothing' call. As a
   ;; workaround, consume any such wads here.
   (cached-wad (stream* client))
-
+  ;; Separate children into children of type `cst:cst' and "extra"
+  ;; children. Extra children arise mainly due to comments and other
+  ;; skipped input which are represented as `wad's which or not of
+  ;; type `cst:cst'
   (multiple-value-bind (cst-children direct-cst-children extra-children)
       (loop for child in children
             if (typep child 'cst:cst)
@@ -288,7 +291,18 @@
             finally (return (values cst-children
                                     direct-cst-children
                                     extra-children)))
-    (let* ((cst           (call-next-method client result cst-children source))
+    ;; Call the next method to obtain a result, CST, of type `cst:cst'
+    ;; which contains `result' in its raw slot.
+    ;;
+    ;; Two properties of CST will be adjusted:
+    ;; 1. Depending on whether the result is a `cst:cons-cst' or a
+    ;;    `cst:atom-cst', select either `cons-wad' or `atom-wad' as
+    ;;    the new class for CST.
+    ;; 2. In case there are "extra" children or "orphan" CST children,
+    ;;    add those to the result.
+    (let* ((cst           (if (null extra-children)
+                              (call-next-method) ; possibly faster
+                              (call-next-method client result cst-children source)))
            (consp         (cst:consp cst))
            (first         (when consp (cst:first cst)))
            (rest          (when consp (cst:rest cst)))
@@ -330,7 +344,7 @@
 
               :when (null (setf orphans (delete child orphans :test #'eq)))
                 :do ; (format *trace-output* "  Visited ~D, no actual orphans~%" i)
-                   (return)
+                    (return)
               :do (setf worklist (nconc worklist (copy-list (children child))))
               :finally (format *trace-output* "  Visited (all) ~D, actual orphans ~:D~%"
                                i (length orphans)))
