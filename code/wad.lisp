@@ -633,7 +633,7 @@
    ;; of the comment.
    (%semicolon-count :initarg :semicolon-count :reader semicolon-count)))
 
-(defclass word-wad (skipped-wad)
+(defclass word-wad (skipped-wad) ; TODO should not inherit children-mixin
   ((%misspelled :initarg :misspelled
                 :reader  misspelled)))
 
