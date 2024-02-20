@@ -90,7 +90,7 @@
 ;;; Source position
 
 (defmethod eclector.base:source-position ((client client) (stream buffer-stream))
-  (cons (current-line-number stream) (current-item-number stream)))
+  (cons (line-number stream) (item-number stream)))
 
 (defmethod eclector.base:make-source-range ((client client) (start t) (end t))
   (cons start end))
@@ -111,7 +111,7 @@
 (defmacro make-result-wad* (class stream source &rest extra-initargs)
   (alexandria:once-only (stream)
     `(destructure-source (start-line start-column end-line end-column) ,source ; TODO gensyms
-       (let* ((line-number    (current-line-number ,stream))
+       (let* ((line-number    (line-number ,stream))
               (max-line-width (compute-max-line-width
                                ,stream start-line line-number '())))
          (make-instance ,class :cache                      *cache*
@@ -236,7 +236,7 @@
 (defun adjust-result-class (cst new-class stream source)
   (destructuring-bind ((start-line . start-column) . (end-line . end-column))
       source
-    (let* ((line-number    (current-line-number stream))
+    (let* ((line-number    (line-number stream))
            (max-line-width (compute-max-line-width
                             stream start-line line-number '())))
       (change-class cst new-class
