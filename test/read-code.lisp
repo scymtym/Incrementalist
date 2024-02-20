@@ -13,7 +13,7 @@
         (when (and (plusp i)
                    *print-right-margin*
                    (zerop (mod (/ i 1000) *print-right-margin*)))
-          (terpri stream))
+          (format stream "~&;   "))
         (write-char indicator stream)
         (force-output stream))
       (incf i)
@@ -59,9 +59,10 @@
   (let ((content (a:read-file-into-string filename)))
     (multiple-value-bind (count insert-time delete-time)
         (insert-then-delete content)
-      (format *trace-output* "~&;   insert: ~,2F s (~:D/s) delete: ~,2F s (~:D/s)~%"
-              insert-time (floor count insert-time)
-              delete-time (floor count delete-time)))))
+      (format *trace-output* "~&;   insert: ~,2F s~@[ (~:D/s)~] ~@
+                                    delete: ~,2F s~@[ (~:D/s)~]~%"
+              insert-time (when (plusp insert-time) (floor count insert-time))
+              delete-time (when (plusp delete-time) (floor count delete-time))))))
 
 (test read-code
   "Incrementally insert and delete contents of all source files, parsing
