@@ -305,16 +305,19 @@
                                 'atom-wad)))
            (orphans       '()))
       ;; Optimistic assumption: no orphans
-      (block nil
-        (let ((remaining direct-cst-children))
+      (let ((remaining direct-cst-children))
+        (block nil
           (map-children (lambda (child)
-                          (when (not (eq child (pop remaining)))
-                            (setf orphans (copy-list direct-cst-children))
-                            (format *trace-output* "~D direct children, actual orphans~%" (length direct-cst-children))
-                            (return)))
-                        cst)
-          ; (format *trace-output* "~D direct children, no orphans~%" (length direct-cst-children))
-          ))
+                          (let ((old-remaining remaining)
+                                (cst-child     (pop remaining)))
+                            (when (not (eq child cst-child))
+                              (setf remaining old-remaining)
+                              (format *trace-output* "~D direct children, actual orphans~%" (length direct-cst-children))
+                              (return))))
+                        cst))
+                                        ; (format *trace-output* "~D direct children, no orphans~%" (length direct-cst-children))
+        (unless (null remaining)
+          (setf orphans remaining)))
       (when orphans
                                         ; (format *trace-output* "Orphans 1: ~A~%" orphans)
         #+no (format *trace-output* "Orphans ~D~%" (length orphans))
@@ -328,8 +331,8 @@
                                         ; :do (format *trace-output* "Child ~A~%Worklist ~A~%Orphans ~A~%" child worklist orphans)
 
               :when (null (setf orphans (delete child orphans :test #'eq)))
-              :do ; (format *trace-output* "  Visited ~D, no actual orphans~%" i)
-                 (return)
+                :do ; (format *trace-output* "  Visited ~D, no actual orphans~%" i)
+                   (return)
               :do (setf worklist (nconc worklist (copy-list (children child))))
               :finally (format *trace-output* "  Visited (all) ~D, actual orphans ~:D~%"
                                i (length orphans)))
@@ -363,10 +366,10 @@
         (when wrap-around
           (assert direct-cst-children))
         (let ((result (adjust-result cst new-class (stream* client) source
-                              (sort (append extra-children orphans) #'< ; TODO HACK
-                                    :key (lambda (child)
-                                           (position child children)))
-                              wrap-around)))
+                                     (sort (append extra-children orphans) #'< ; TODO HACK
+                                           :key (lambda (child)
+                                                  (position child children)))
+                                     wrap-around)))
           result)))))
 
 (defmethod eclector.parse-result:make-expression-result
