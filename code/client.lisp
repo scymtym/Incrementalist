@@ -324,7 +324,7 @@
                                 (cst-child     (pop remaining)))
                             (when (not (eq child cst-child))
                               (setf remaining old-remaining)
-                              (format *trace-output* "~D direct children, actual orphans~%" (length direct-cst-children))
+                              ; (format *trace-output* "~D direct children, actual orphans~%" (length direct-cst-children))
                               (return))))
                         cst))
                                         ; (format *trace-output* "~D direct children, no orphans~%" (length direct-cst-children))
@@ -346,8 +346,8 @@
                 :do ; (format *trace-output* "  Visited ~D, no actual orphans~%" i)
                     (return)
               :do (setf worklist (nconc worklist (copy-list (children child))))
-              :finally (format *trace-output* "  Visited (all) ~D, actual orphans ~:D~%"
-                               i (length orphans)))
+              :finally (progn) #+no (format *trace-output* "  Visited (all) ~D, actual orphans ~:D~%"
+                                      i (length orphans)))
                                         ; (format *trace-output* "Orphans 2: ~A~%" orphans)
         )
       #+no (format *trace-output* "Result         ~A~@
